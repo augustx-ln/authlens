@@ -1,0 +1,15 @@
+Feb 12 09:12:10 lab-server sshd[4101]: Failed password for invalid user admin from 198.51.100.42 port 54321 ssh2
+Feb 12 09:12:48 lab-server sshd[4102]: Failed password for alex from 198.51.100.42 port 54322 ssh2
+Feb 12 09:13:12 lab-server sshd[4103]: Failed password for alex from 198.51.100.42 port 54323 ssh2
+Feb 12 09:13:47 lab-server sshd[4104]: Failed password for alex from 198.51.100.42 port 54324 ssh2
+Feb 12 09:14:09 lab-server sshd[4105]: Failed password for alex from 198.51.100.42 port 54325 ssh2
+Feb 12 09:14:32 lab-server sshd[4106]: Failed password for alex from 198.51.100.42 port 54326 ssh2
+Feb 12 09:19:05 lab-server sshd[4107]: Failed password for invalid user deploy from 198.51.100.42 port 54327 ssh2
+Feb 12 09:19:42 lab-server sshd[4108]: Failed password for invalid user backup from 198.51.100.42 port 54328 ssh2
+Feb 12 09:20:10 lab-server sshd[4109]: Failed password for invalid user monitor from 198.51.100.42 port 54329 ssh2
+Feb 12 09:20:38 lab-server sshd[4110]: Failed password for invalid user postgres from 198.51.100.42 port 54330 ssh2
+Feb 12 09:21:07 lab-server sshd[4111]: Failed password for invalid user git from 198.51.100.42 port 54331 ssh2
+Feb 12 09:21:36 lab-server sshd[4112]: Failed password for alex from 198.51.100.42 port 54332 ssh2
+Feb 12 09:22:02 lab-server sshd[4113]: Failed password for alex from 198.51.100.42 port 54333 ssh2
+Feb 12 09:22:31 lab-server sshd[4114]: Failed password for alex from 198.51.100.42 port 54334 ssh2
+Feb 12 09:24:16 lab-server sshd[4115]: Accepted publickey for alex from 198.51.100.42 port 54335 ssh2
