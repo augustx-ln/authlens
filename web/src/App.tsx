@@ -184,62 +184,73 @@ function App() {
         <a className="brand" href="#top" aria-label="AuthLens home" onClick={reset}>
           <span className="brand-mark"><Icon name="shield" size={21} /></span>
           <span>auth<span>lens</span></span>
-          <span className="brand-tag">BETA</span>
         </a>
         <div className="topbar-right">
-          <span className="privacy-chip"><span className="status-dot" /><Icon name="lock" size={14} /> Private analysis</span>
           <a className="github-link" href="https://github.com/augustx-ln/authlens" target="_blank" rel="noreferrer">GitHub <Icon name="external" size={14} /></a>
         </div>
       </header>
 
       <main id="top">
-        <section className="hero-row">
+        {!report && <section className="hero-row">
           <div>
-            <div className="eyebrow"><span className="eyebrow-line" /> SECURITY LOG WORKSPACE <span className="eyebrow-divider">/</span> ACTIVITY TRIAGE</div>
-            <h1>See the story behind<br /><span>system activity.</span></h1>
-            <p className="hero-copy">Review suspicious sign-ins, privileged activity, and account changes across Windows and Linux logs.</p>
+            <p className="eyebrow">AUTHLENS · SECURITY LOG ANALYSIS</p>
+            <h1>Find suspicious activity in <span>Windows and Linux logs.</span></h1>
+            <p className="hero-copy">Review sign-in attempts, privileged commands, and account changes together. Your files are analyzed locally in this browser.</p>
           </div>
-          <div className="hero-aside">
-            <div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="orbit-core"><Icon name="shield" size={32} /></div>
-            <span className="orbit-label label-top">LOCAL PARSING</span><span className="orbit-label label-bottom">RUST ENGINE</span>
-          </div>
-        </section>
+        </section>}
 
         <section className="workspace-card" aria-label="Security log analysis">
           {!report ? (
             <div className="welcome-panel">
               <div className="welcome-head">
-                <div><span className="section-kicker">START AN INVESTIGATION</span><h2>Bring logs into a case</h2><p>Choose one or more Windows Security or Linux authentication and audit logs. AuthLens will correlate them in one timeline.</p></div>
-                <div className="format-badges"><span><i className="win-icon">W</i> Windows <small>.evtx</small></span><span><i className="linux-icon">L</i> Linux <small>.log / audit</small></span></div>
+                <div><span className="section-kicker">START HERE</span><h2>Analyze a set of security logs</h2><p>Add Windows Security or Linux authentication and audit files to build a searchable investigation.</p></div>
               </div>
-              <button className={`dropzone ${busy ? 'is-busy' : ''}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); analyzeFiles(event.dataTransfer.files) }} disabled={busy}>
-                <span className="upload-icon"><Icon name={busy ? 'spark' : 'upload'} size={24} /></span>
-                <strong>{busy ? 'Analyzing locally…' : 'Drop log files here, or browse'}</strong>
-                <span className="drop-caption">Maximum total case size 25 MB <span>·</span> No upload required</span>
-                {busy && <span className="progress-track"><i /></span>}
-              </button>
-              <input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
-              {error && <div className="error-message" role="alert"><Icon name="close" size={16} /> {error}</div>}
-              <div className="welcome-foot"><span className="safe-note"><Icon name="lock" size={15} /> Your logs stay in this browser and are never sent to a server.</span><button className="demo-button" onClick={analyzeDemo} disabled={busy}><Icon name="spark" size={16} /> Try a sample investigation <Icon name="arrow" size={15} /></button></div>
-              <div className="detection-strip"><span>DETECTION COVERAGE</span><b>Sign-in patterns</b><i /><b>Privileged activity</b><i /><b>Account changes</b><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
+              <div className="welcome-layout">
+                <div className="upload-column">
+                  <button className={`dropzone ${busy ? 'is-busy' : ''}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); analyzeFiles(event.dataTransfer.files) }} disabled={busy} aria-busy={busy}>
+                    <span className="upload-icon"><Icon name={busy ? 'spark' : 'upload'} size={24} /></span>
+                    <strong aria-live="polite">{busy ? 'Analyzing your logs locally…' : 'Drop log files here'}</strong>
+                    <span className="drop-action">{busy ? 'This usually takes a few seconds' : 'Choose files'} {!busy && <Icon name="arrow" size={15} />}</span>
+                    <span className="drop-caption">.evtx, .log, .txt, .authlog, .audit · 25 MB total</span>
+                    {busy && <span className="progress-track"><i /></span>}
+                  </button>
+                  <input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+                  {error && <div className="error-message" role="alert"><Icon name="close" size={16} /> {error}</div>}
+                  <div className="upload-footer">
+                    <span className="safe-note"><Icon name="lock" size={15} /> Files stay in this browser.</span>
+                    <button className="demo-button" onClick={analyzeDemo} disabled={busy}>Open sample report <Icon name="arrow" size={15} /></button>
+                  </div>
+                  <p className="coverage-copy">Covers sign-ins, privilege use, and account or group changes.</p>
+                </div>
+                <aside className="product-preview" aria-label="Example AuthLens report using synthetic data">
+                  <div className="preview-heading"><div><span className="section-kicker">PRODUCT PREVIEW</span><h3>Investigation overview</h3></div><span className="synthetic-label">Synthetic data</span></div>
+                  <div className="preview-metrics"><div><b>20</b><span>Events</span></div><div><b>6</b><span>Findings</span></div><div><b>2</b><span>Log files</span></div></div>
+                  <div className="preview-activity" aria-hidden="true"><span /><span /><span /><span /><span /><span /><span /><span /><span /><span /><span /><span /></div>
+                  <div className="preview-list">
+                    <div><i className="preview-dot high" /><span><b>Possible password spray</b><small>198.51.100.42 · multiple accounts</small></span><b className="preview-count">9</b></div>
+                    <div><i className="preview-dot info" /><span><b>Linux user account created</b><small>Linux audit · backupsvc</small></span><b className="preview-count">1</b></div>
+                  </div>
+                  <p className="preview-note">Example output from the included logs. Open the sample report to explore the interactive dashboard.</p>
+                </aside>
+              </div>
             </div>
           ) : (
             <>
               <div className="report-header">
-                <div className="report-title-group"><span className="report-icon"><Icon name="file" size={18} /></span><div><div className="section-kicker">INVESTIGATION REPORT</div><h2>{caseName}</h2></div><span className="loaded-chip"><Icon name="check" size={13} /> ANALYZED</span></div>
-                <div className="report-actions"><button className="quiet-button" onClick={exportCsv}><Icon name="download" size={15} /> CSV</button><button className="quiet-button" onClick={exportJson}><Icon name="download" size={15} /> JSON</button><button className="primary-button small" onClick={() => fileInput.current?.click()} disabled={busy}><Icon name="upload" size={15} /> New case</button><button className="icon-button" onClick={reset} aria-label="Clear investigation"><Icon name="close" size={17} /></button><input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} /></div>
+                <div className="report-title-group"><span className="report-icon"><Icon name="file" size={18} /></span><div><div className="section-kicker">INVESTIGATION</div><h2>{caseName}</h2></div></div>
+                <div className="report-actions">{busy && <span className="loading-status" role="status"><i /> Analyzing locally…</span>}<button className="quiet-button" onClick={exportCsv}><Icon name="download" size={15} /> CSV</button><button className="quiet-button" onClick={exportJson}><Icon name="download" size={15} /> JSON</button><button className="primary-button small" onClick={() => fileInput.current?.click()} disabled={busy}><Icon name="upload" size={15} /> New case</button><button className="icon-button" onClick={reset} aria-label="Clear investigation"><Icon name="close" size={17} /></button><input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} /></div>
               </div>
-              <div className="privacy-line"><Icon name="lock" size={14} /> Parsed locally in your browser <span /> {report.parsedLines.toLocaleString()} events <span />{report.truncated ? 'Analysis capped at 100,000 events' : `${report.sourceFiles.length} source file${report.sourceFiles.length === 1 ? '' : 's'}`}{report.skippedLines > 0 && <><span /> {report.skippedLines.toLocaleString()} records skipped</>}</div>
+              <div className="privacy-line">{report.parsedLines.toLocaleString()} events <span />{report.truncated ? 'Analysis capped at 100,000 events' : `${report.sourceFiles.length} source file${report.sourceFiles.length === 1 ? '' : 's'}`}{report.skippedLines > 0 && <><span /> {report.skippedLines.toLocaleString()} records skipped</>}</div>
               {report.sourceFiles.length > 1 && <div className="source-files">Files in this case: {report.sourceFiles.join(' · ')}</div>}
               {report.parsedLines === 0 && <div className="info-message"><Icon name="file" size={15} /> No supported events were found. AuthLens reads OpenSSH sign-ins, sudo commands, selected Linux auditd account records, and Windows Security event IDs 4624/4625/4672/4720/4722/4724/4725/4728/4732/4756.</div>}
               {report.findingsTruncated && <div className="info-message"><Icon name="file" size={15} /> Findings are limited to the 500 highest-priority items; the event stream still includes every parsed event.</div>}
               {error && <div className="error-message" role="alert"><Icon name="close" size={16} /> {error}</div>}
               <div className="metric-grid">
-                <Metric label="TOTAL EVENTS" value={report.parsedLines.toLocaleString()} note="From all selected files" tone="neutral" />
-                <Metric label="FINDINGS" value={String(report.alerts.length).padStart(2, '0')} note={report.findingsTruncated ? '500-item display limit' : report.alerts.length ? 'Review in context' : 'No matched patterns'} tone={report.alerts.length ? 'amber' : 'green'} />
-                <Metric label="AUTH FAILURES" value={failedCount.toLocaleString()} note="Sign-in events" tone="red" />
-                <Metric label="ACCOUNT CHANGES" value={accountChangeCount.toLocaleString()} note="Audit activity" tone="blue" />
-                <Metric label="PRIVILEGE USE" value={privilegeCount.toLocaleString()} note="Sudo and Windows events" tone="amber" />
+                <Metric label="Events" value={report.parsedLines.toLocaleString()} note="Across selected files" tone="neutral" />
+                <Metric label="Findings" value={String(report.alerts.length)} note={report.findingsTruncated ? '500 item limit' : report.alerts.length ? 'Matched patterns' : 'No matches'} tone={report.alerts.length ? 'amber' : 'green'} />
+                <Metric label="Failed sign-ins" value={failedCount.toLocaleString()} note="Authentication" tone="red" />
+                <Metric label="Account changes" value={accountChangeCount.toLocaleString()} note="Audit activity" tone="blue" />
+                <Metric label="Privilege use" value={privilegeCount.toLocaleString()} note="Elevated activity" tone="amber" />
               </div>
               <nav className="report-tabs" aria-label="Report views"><button className={view === 'overview' ? 'active' : ''} onClick={() => setView('overview')}>Overview <span>{report.alerts.length}</span></button><button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}>Event stream <span>{report.events.length.toLocaleString()}</span></button></nav>
               {view === 'overview' ? <Overview report={report} onSelectAlert={setActiveAlert} onViewEvents={() => setView('events')} /> : <EventTable events={filteredEvents} query={query} setQuery={setQuery} outcomeFilter={outcomeFilter} setOutcomeFilter={setOutcomeFilter} showSource={report.sourceFiles.length > 1} />}
@@ -247,7 +258,7 @@ function App() {
           )}
         </section>
 
-        <footer className="page-footer"><span>AUTHLENS <b>·</b> OPEN-SOURCE SECURITY LOG TRIAGE</span><span>BUILT FOR DEFENDERS <b>·</b> NO SERVER. NO LOG UPLOADS.</span></footer>
+      <footer className="page-footer"><span>AuthLens · Open-source security log analysis</span><span>Local browser analysis · No log uploads</span></footer>
       </main>
 
       {activeAlert && <div className="modal-backdrop" role="presentation" onClick={() => setActiveAlert(null)}><section className="alert-modal" role="dialog" aria-modal="true" aria-labelledby="alert-title" onClick={(event) => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setActiveAlert(null)} aria-label="Close finding details"><Icon name="close" /></button><span className={`severity-pill ${activeAlert.severity.toLowerCase()}`}>{activeAlert.severity === 'Info' ? 'ACTIVITY' : `${activeAlert.severity} PRIORITY`}</span><h2 id="alert-title">{activeAlert.title}</h2><p>{activeAlert.description}</p><div className="modal-details"><div><span>SOURCE ADDRESS</span><b>{activeAlert.sourceIp}</b></div><div><span>ACCOUNT / TARGET</span><b>{activeAlert.username ?? 'Multiple accounts'}</b></div><div><span>ACTOR</span><b>{activeAlert.actor ?? '—'}</b></div><div><span>SOURCE FILES</span><b>{activeAlert.sourceFiles.join(' · ')}</b></div><div><span>OBSERVED</span><b>{activeAlert.count} event{activeAlert.count === 1 ? '' : 's'}</b></div><div><span>TIME WINDOW</span><b>{formatTime(activeAlert.firstSeen)} — {formatTime(activeAlert.lastSeen)}</b></div></div>{activeAlert.technique ? <a className="mitre-link" href={`https://attack.mitre.org/techniques/${activeAlert.technique.replace('.', '/')}/`} target="_blank" rel="noreferrer"><span><small>MITRE ATT&amp;CK</small><b>{activeAlert.technique} · {activeAlert.techniqueName}</b></span><Icon name="external" /></a> : <div className="mitre-link"><span><small>ACTIVITY CONTEXT</small><b>{activeAlert.techniqueName}</b></span></div>}<button className="primary-button modal-done" onClick={() => setActiveAlert(null)}>Back to investigation</button></section></div>}
@@ -272,18 +283,17 @@ function Overview({ report, onSelectAlert, onViewEvents }: { report: Report; onS
   }, [report.events])
 
   return <div className="overview-grid">
-    <section className="chart-panel"><div className="panel-heading"><div><span className="section-kicker">EVENT DISTRIBUTION</span><h3>System activity</h3></div><div className="chart-legend"><span><i className="legend-fail" /> Failed</span><span><i className="legend-success" /> Successful</span><span><i className="legend-activity" /> Activity</span></div></div><div className="chart-area"><div className="chart-y"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars-area"><div className="chart-guides"><i /><i /><i /><i /><i /></div>{buckets.map((bucket) => <div className="bar-column" key={bucket.label} title={`${bucket.label} · ${bucket.failed} failed, ${bucket.success} successful, ${bucket.activity} activity`}><div className="bar-stack" style={{ height: `${Math.max(bucket.height, bucket.height ? 5 : 0)}%` }}><i className="bar-activity" style={{ height: `${bucket.activityHeight}%` }} /><i className="bar-success" style={{ height: `${bucket.successHeight}%` }} /><i className="bar-failed" style={{ height: `${bucket.failedHeight}%` }} /></div><span>{bucket.label}</span></div>)}</div></div><div className="chart-foot"><span><i className="pulse-dot" /> {report.events.length ? `${report.events.length.toLocaleString()} events plotted by local time` : 'No events to plot'}</span><span>2 HOUR INTERVALS</span></div></section>
-    <section className="findings-panel"><div className="panel-heading"><div><span className="section-kicker">RULE MATCHES</span><h3>Review findings</h3></div><span className="findings-count">{String(report.alerts.length).padStart(2, '0')}</span></div>{report.alerts.length ? <div className="findings-list">{report.alerts.slice(0, 12).map((alert) => <button className="finding-row" key={alert.id} onClick={() => onSelectAlert(alert)}><span className={`finding-indicator ${alert.severity.toLowerCase()}`} /><span className="finding-content"><b>{alert.title}</b><small>{alert.sourceFiles.join(' · ')} <i>·</i> {alert.username ?? 'Multiple accounts'}</small></span><span className="finding-meta"><b>{alert.count}</b><small>{formatTime(alert.firstSeen)}</small></span><Icon name="arrow" size={16} /></button>)}</div> : <div className="no-findings"><span><Icon name="check" size={20} /></span><b>No matching patterns found</b><small>Review the event stream for context.</small></div>}{report.alerts.length > 12 && <small className="more-findings">Showing 12 of {report.alerts.length} findings</small>}<button className="panel-link" onClick={onViewEvents}>Review all events <Icon name="arrow" size={15} /></button></section>
+    <section className="chart-panel"><div className="panel-heading"><div><span className="section-kicker">EVENT DISTRIBUTION</span><h3>System activity</h3></div><div className="chart-legend"><span><i className="legend-fail" /> Failed</span><span><i className="legend-success" /> Successful</span><span><i className="legend-activity" /> Activity</span></div></div><div className="chart-area"><div className="chart-y"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars-area"><div className="chart-guides"><i /><i /><i /><i /><i /></div>{buckets.map((bucket) => <div className="bar-column" key={bucket.label} title={`${bucket.label} · ${bucket.failed} failed, ${bucket.success} successful, ${bucket.activity} activity`}><div className="bar-stack" style={{ height: `${Math.max(bucket.height, bucket.height ? 5 : 0)}%` }}><i className="bar-activity" style={{ height: `${bucket.activityHeight}%` }} /><i className="bar-success" style={{ height: `${bucket.successHeight}%` }} /><i className="bar-failed" style={{ height: `${bucket.failedHeight}%` }} /></div><span>{bucket.label}</span></div>)}</div></div><div className="chart-foot"><span>{report.events.length ? `${report.events.length.toLocaleString()} events · local time` : 'No events to plot'}</span><span>2 hour intervals</span></div></section>
+    <section className="findings-panel"><div className="panel-heading"><div><span className="section-kicker">MATCHED PATTERNS</span><h3>Findings to review</h3></div><span className="findings-count">{report.alerts.length}</span></div>{report.alerts.length ? <div className="findings-list">{report.alerts.slice(0, 12).map((alert) => <button className="finding-row" key={alert.id} onClick={() => onSelectAlert(alert)}><span className={`finding-indicator ${alert.severity.toLowerCase()}`} /><span className="finding-content"><b>{alert.title}</b><small>{alert.sourceFiles.join(' · ')} <i>·</i> {alert.username ?? 'Multiple accounts'}</small></span><span className="finding-meta"><b>{alert.count}</b><small>{formatTime(alert.firstSeen)}</small></span><Icon name="arrow" size={16} /></button>)}</div> : <div className="no-findings"><span><Icon name="check" size={20} /></span><b>No matching patterns found</b><small>Review the event stream for context.</small></div>}{report.alerts.length > 12 && <small className="more-findings">Showing 12 of {report.alerts.length} findings</small>}<button className="panel-link" onClick={onViewEvents}>Review all events <Icon name="arrow" size={15} /></button></section>
     <section className="events-panel"><div className="panel-heading"><div><span className="section-kicker">LATEST ACTIVITY</span><h3>Recent security events</h3></div><button className="text-link" onClick={onViewEvents}>View all <Icon name="arrow" size={14} /></button></div><EventTable events={report.events.slice(-6).reverse()} compact query="" setQuery={() => undefined} outcomeFilter="all" setOutcomeFilter={() => undefined} showSource={report.sourceFiles.length > 1} /></section>
-    <div className="coverage-note"><span className="coverage-icon"><Icon name="shield" size={17} /></span><span><b>Detection coverage</b><small>Sign-in patterns · Privileged activity · Account creation and group changes</small></span><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
   </div>
 }
 
 function EventTable({ events, query, setQuery, outcomeFilter, setOutcomeFilter, compact = false, showSource = false }: { events: AuthEvent[]; query: string; setQuery: (value: string) => void; outcomeFilter: string; setOutcomeFilter: (value: string) => void; compact?: boolean; showSource?: boolean }) {
   const columns = (compact ? 7 : 8) + Number(showSource)
   return <div className={`event-section ${compact ? 'compact' : ''}`}>
-    {!compact && <div className="table-tools"><label className="search-box"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search account, actor, event, file…" /></label><select aria-label="Filter by outcome" value={outcomeFilter} onChange={(event) => setOutcomeFilter(event.target.value)}><option value="all">All outcomes</option><option value="failed">Failed</option><option value="success">Successful</option><option value="activity">Activity</option></select><span className="row-count">{events.length.toLocaleString()} EVENTS</span></div>}
-    <div className="table-scroll"><table><thead><tr><th>TIME</th><th>EVENT</th><th>RESULT</th><th>ACCOUNT / TARGET</th><th>ACTOR</th><th>SOURCE ADDRESS</th><th>PLATFORM</th>{showSource && <th>SOURCE FILE</th>}{!compact && <th>EVENT ID</th>}</tr></thead><tbody>{events.length ? events.map((event, index) => <tr key={`${event.timestamp}-${event.sourceFile}-${event.sourceIp}-${event.username}-${index}`}><td className="time-cell">{formatTime(event.timestamp)}</td><td className="event-action-cell"><b>{event.action}</b><small>{event.category.replace('_', ' ')}</small></td><td><span className={`outcome-tag ${event.outcome}`}><i />{event.outcome === 'failed' ? 'Failed' : event.outcome === 'success' ? 'Success' : 'Activity'}</span></td><td className="account-cell">{event.username}</td><td>{event.actor ?? '—'}</td><td className="ip-cell">{event.sourceIp}</td><td><span className={`platform-tag ${event.platform.toLowerCase()}`}>{event.platform === 'Windows' ? 'W' : 'L'}</span> {event.platform}</td>{showSource && <td className="source-file-cell">{event.sourceFile}</td>}{!compact && <td className="event-id-cell">{event.eventId ?? '—'}</td>}</tr>) : <tr><td colSpan={columns} className="empty-row">No events match this search.</td></tr>}</tbody></table></div>
+    {!compact && <div className="table-tools"><label className="search-box"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search accounts, events, IPs, files" /></label><select aria-label="Filter by outcome" value={outcomeFilter} onChange={(event) => setOutcomeFilter(event.target.value)}><option value="all">All outcomes</option><option value="failed">Failed</option><option value="success">Successful</option><option value="activity">Activity</option></select><span className="row-count">{events.length.toLocaleString()} events</span></div>}
+    <div className="table-scroll"><table><thead><tr><th>Time</th><th>Event</th><th>Result</th><th>Account / target</th><th>Actor</th><th>Source address</th><th>Platform</th>{showSource && <th>Source file</th>}{!compact && <th>Event ID</th>}</tr></thead><tbody>{events.length ? events.map((event, index) => <tr key={`${event.timestamp}-${event.sourceFile}-${event.sourceIp}-${event.username}-${index}`}><td className="time-cell">{formatTime(event.timestamp)}</td><td className="event-action-cell"><b>{event.action}</b><small>{event.category.replace('_', ' ')}</small></td><td><span className={`outcome-text ${event.outcome}`}><i />{event.outcome === 'failed' ? 'Failed' : event.outcome === 'success' ? 'Success' : 'Activity'}</span></td><td className="account-cell">{event.username}</td><td>{event.actor ?? '—'}</td><td className="ip-cell">{event.sourceIp}</td><td>{event.platform}</td>{showSource && <td className="source-file-cell">{event.sourceFile}</td>}{!compact && <td className="event-id-cell">{event.eventId ?? '—'}</td>}</tr>) : <tr><td colSpan={columns} className="empty-row">No events match this search.</td></tr>}</tbody></table></div>
   </div>
 }
 

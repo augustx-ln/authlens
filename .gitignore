@@ -4,3 +4,4 @@
 /web/src/wasm/pkg/
 /.env*
 !.env.example
+/.playwright-cli/
