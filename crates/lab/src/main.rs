@@ -109,7 +109,7 @@ impl LabState {
                 );
             }
         } else if event.kind == "http" {
-            let requests = self
+            let recent: Vec<_> = self
                 .events
                 .iter()
                 .filter(|item| {
@@ -117,7 +117,23 @@ impl LabState {
                         && item.kind == "http"
                         && event.at_ms.saturating_sub(item.at_ms) <= 10_000
                 })
-                .count();
+                .collect();
+            let requests = recent.len();
+            let missing_paths: HashSet<_> = recent
+                .iter()
+                .filter(|item| item.status == Some(404))
+                .filter_map(|item| item.detail.split_once(' ').map(|(_, path)| path.to_owned()))
+                .collect();
+            let unusual_methods: HashSet<_> = recent
+                .iter()
+                .filter(|item| item.status == Some(405))
+                .filter_map(|item| {
+                    item.detail
+                        .split_once(' ')
+                        .map(|(method, _)| method.to_owned())
+                })
+                .collect();
+            drop(recent);
             if requests >= 12 {
                 self.upsert(
                     format!("http-burst:{}", event.source),
@@ -127,6 +143,21 @@ impl LabState {
                     format!("{requests} HTTP requests in 10 seconds"),
                     requests,
                 );
+
+                if missing_paths.len() >= 6 || unusual_methods.len() >= 2 {
+                    self.upsert(
+                        format!("web-recon:{}", event.source),
+                        "Possible web reconnaissance burst",
+                        "High",
+                        &event,
+                        format!(
+                            "{requests} requests in 10 seconds; {} distinct missing paths; methods rejected with 405: {}",
+                            missing_paths.len(),
+                            if unusual_methods.is_empty() { "none".to_owned() } else { unusual_methods.into_iter().collect::<Vec<_>>().join(", ") },
+                        ),
+                        requests,
+                    );
+                }
             }
 
             let paths: HashSet<_> = self
