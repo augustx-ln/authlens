@@ -199,6 +199,9 @@ main.report-layout { width: min(100% - 24px, 1520px); }
 .table-tools select:focus-visible { border-color: var(--color-accent); box-shadow: 0 0 0 3px #62e0bd22; }
 .row-count { margin-left: auto; color: var(--color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table-scroll { overflow: auto; }
+.event-section:not(.compact) .table-scroll { max-height: min(60vh, 640px); }
+.event-section:not(.compact) .table-scroll:focus-visible { outline: 3px solid #62e0bd8c; outline-offset: -3px; }
+.event-section:not(.compact) th { position: sticky; top: 0; z-index: 1; background: #121e28; }
 .event-section { --column-time: 13%; --column-event: 23%; --column-result: 8%; --column-account: 14%; --column-actor: 14%; --column-address: 12%; --column-platform: 8%; --column-eight: 8%; }
 .event-section.with-source { --column-event: 21%; --column-result: 7%; --column-account: 12%; --column-actor: 12%; --column-address: 11%; --column-platform: 7%; --column-eight: 11%; --column-nine: 6%; }
 .event-section.compact { --column-event: 25%; --column-account: 15%; --column-actor: 15%; --column-address: 14%; --column-platform: 10%; }
