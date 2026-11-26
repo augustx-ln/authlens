@@ -19,8 +19,6 @@ AuthLens is a browser-based security log triage workspace. It uses a Rust WebAss
 
 ## Privacy and limits
 
-The downloadable `sample-security.evtx` is a 7-record clean Security log from the [evtx parser's public test corpus](https://github.com/omerbenamram/evtx/tree/master/samples), licensed with the parser under MIT/Apache-2.0. It includes event IDs 5152, 4611, 4776, 4625, 5157, and 4673. It is provided for parser practice; the existing synthetic sample report demonstrates AuthLens' detections.
-
 The deployed site is static. The selected log file is read by the browser and passed to the Rust WebAssembly analyzer in the same tab; the public site has no backend, analytics, or log upload endpoint. It does not store log contents in browser storage. The optional Docker lab runs a local Rust server with in-memory activity records. Use only logs you are permitted to analyze, and avoid putting employer or customer data in public issue reports.
 
 The combined case is limited to 25 MB and analysis is capped at 100,000 events. The report retains all parsed events and caps findings at 500, prioritizing high and medium severity first. Detection thresholds are intentionally simple and can produce false positives or miss activity. Findings are investigation leads, not proof of compromise. The Linux parser targets common OpenSSH/sudo messages and selected auditd record types; syslog timestamps have no year or timezone, so AuthLens uses the current year and displays them in the browser's local timezone. Auditd coverage depends on the host recording those event types. Windows event collection depends on the relevant audit policies being enabled. Other event types and formats are ignored.
