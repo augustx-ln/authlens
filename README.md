@@ -66,7 +66,7 @@ This lab puts the target web page and seven TCP probe ports in a Docker containe
    read -rp 'Windows lab IP: ' TARGET_IP
    curl "http://$TARGET_IP:8080/"
    nmap -sT -Pn -p 8081-8087 "$TARGET_IP"
-   for path in admin backup config debug login test secret status; do curl -s -o /dev/null "http://$TARGET_IP:8080/$path"; done
+   for endpoint in admin backup config debug login test secret status; do curl -s -o /dev/null "http://$TARGET_IP:8080/$endpoint"; done
    curl -A 'WhatWeb/0.5' "http://$TARGET_IP:8080/"
    ```
 
