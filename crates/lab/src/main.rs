@@ -270,9 +270,19 @@ async fn track_http(
         "/vendor/phpunit",
         "/config.json",
         "/backup.zip",
+        "/api-docs",
+        "/.aws/",
+        "/.htaccess",
+        "/server-status",
+        "/admin.php",
+        "/credentials",
     ]
     .iter()
     .find(|probe| path_lower.starts_with(**probe));
+    let traversal = path_lower.contains("../")
+        || path_lower.contains("..%2f")
+        || path_lower.contains("%2e%2e")
+        || path_lower.contains("%252e%252e");
     if let Some(tool) = known_tool {
         lab.fingerprint(&event, &format!("Tool signature in User-Agent: {tool}"));
     } else if let Some(probe) = known_path {
@@ -280,7 +290,12 @@ async fn track_http(
             &event,
             &format!("Common fingerprint path requested: {probe}"),
         );
-    } else if matches!(method.as_str(), "OPTIONS" | "TRACE" | "CONNECT" | "DEBUG") {
+    } else if traversal {
+        lab.fingerprint(&event, "Path contains a directory traversal pattern");
+    } else if matches!(
+        method.as_str(),
+        "OPTIONS" | "TRACE" | "CONNECT" | "DEBUG" | "PUT" | "DELETE" | "PATCH"
+    ) {
         lab.fingerprint(&event, &format!("Uncommon HTTP method requested: {method}"));
     }
     response

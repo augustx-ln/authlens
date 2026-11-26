@@ -70,7 +70,7 @@ This lab puts the target web page and seven TCP probe ports in a Docker containe
    curl -A 'WhatWeb/0.5' "http://$TARGET_IP:8080/"
    ```
 
-   The TCP scan produces a finding after four distinct probe ports in 30 seconds. Six distinct missing paths in 60 seconds trigger a path-enumeration finding. Twelve HTTP requests in 10 seconds trigger a rapid-probing finding. Known scanner User-Agents, common technology or exposure paths, and uncommon HTTP methods trigger a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
+   The TCP scan produces a finding after four distinct probe ports in 30 seconds. Six distinct missing paths in 60 seconds trigger a path-enumeration finding. Twelve HTTP requests in 10 seconds trigger a rapid-probing finding, including successful requests. Known scanner User-Agents, common technology or exposure paths, traversal patterns, and uncommon HTTP methods (including `PUT`, `DELETE`, and `PATCH`) trigger a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
 
 4. Stop the target when finished:
 
