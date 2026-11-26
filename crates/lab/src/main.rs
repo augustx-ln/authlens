@@ -396,12 +396,12 @@ mod tests {
             ..LabState::default()
         };
         for port in 8081..=8087 {
-            lab.record(event(2_000, "172.18.0.1", "connection", "", port, None));
+            lab.record(event(2_000, "192.0.2.1", "connection", "", port, None));
         }
         assert!(lab.findings.is_empty());
         assert!(lab.events.is_empty());
         for port in 8081..=8084 {
-            lab.record(event(11_001, "172.18.0.1", "connection", "", port, None));
+            lab.record(event(11_001, "192.0.2.1", "connection", "", port, None));
         }
         assert_eq!(lab.findings[0].title, "Possible TCP connect scan");
     }

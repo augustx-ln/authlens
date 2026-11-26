@@ -52,21 +52,22 @@ This lab puts the target web page and seven TCP probe ports in a Docker containe
 
    For a Kali VM using VMware NAT, this is usually the `VMware Network Adapter VMnet8` address. Verify Kali can reach it. Use a host-only adapter instead if you want a network with no internet route. Do not use your Wi-Fi address for a private lab.
 
-2. Install Node.js 22+, Rust, `wasm-pack`, and Docker Desktop if needed (same local build prerequisites as above). From the repository root, bind the target to that address and start the container. Replace the example address with yours:
+2. Install Node.js 22+, Rust, `wasm-pack`, and Docker Desktop if needed (same local build prerequisites as above). From the repository root, start the container:
 
    ```powershell
-   .\scripts\start-lab.ps1 -LabBindIp '192.168.175.1'
+   .\scripts\start-lab.ps1
    ```
 
-   The script builds the Rust WebAssembly analyzer and React frontend locally, then builds the small Rust lab image and opens the monitor. If Kali uses VMware NAT, you can omit `-LabBindIp` and the script will select the VMnet8 address.
+   The script builds the Rust WebAssembly analyzer and React frontend locally, then builds the small Rust lab image and opens the monitor. It selects the VMnet8 address automatically. For another lab adapter, pass its IPv4 address with `-LabBindIp`.
 
-3. Open [the live monitor](http://localhost:3000/monitor) on Windows. From Kali, replace the example IP with the same Windows lab address:
+3. Open [the live monitor](http://localhost:3000/monitor) on Windows. From Kali, enter the target IP printed by the startup script when prompted:
 
    ```bash
-   curl http://192.168.175.1:8080/
-   nmap -sT -Pn -p 8081-8087 192.168.175.1
-   for path in admin backup config debug login test secret status; do curl -s -o /dev/null "http://192.168.175.1:8080/$path"; done
-   curl -A 'WhatWeb/0.5' http://192.168.175.1:8080/
+   read -rp 'Windows lab IP: ' TARGET_IP
+   curl "http://$TARGET_IP:8080/"
+   nmap -sT -Pn -p 8081-8087 "$TARGET_IP"
+   for path in admin backup config debug login test secret status; do curl -s -o /dev/null "http://$TARGET_IP:8080/$path"; done
+   curl -A 'WhatWeb/0.5' "http://$TARGET_IP:8080/"
    ```
 
    The TCP scan produces a finding after four distinct probe ports in 30 seconds. The missing-page test produces a finding after six distinct 404 paths in 60 seconds. The tool-style User-Agent produces a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
