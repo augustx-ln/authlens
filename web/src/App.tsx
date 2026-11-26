@@ -225,6 +225,7 @@ function FileAnalysis() {
                   <div className="upload-footer">
                     <span className="safe-note"><Icon name="lock" size={15} /> Files stay in this browser.</span>
                     <button className="demo-button" onClick={analyzeDemo} disabled={busy}>Open sample report <Icon name="arrow" size={15} /></button>
+                    <a className="demo-button" href={`${import.meta.env.BASE_URL}samples/sample-security.evtx`} download="authlens-sample-security.evtx">Download Windows sample <Icon name="download" size={15} /></a>
                   </div>
                   <p className="coverage-copy">Covers sign-ins, privilege use, and account or group changes.</p>
                 </div>

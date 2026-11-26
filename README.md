@@ -15,8 +15,11 @@ AuthLens is a browser-based security log triage workspace. It uses a Rust WebAss
 - Shows privileged use and account changes as timeline activity; account creation and group additions also create informational review findings.
 - Shows an event timeline, searchable/filterable event table, finding details, and JSON/CSV export.
 - Includes a synthetic log sample so the demo works without access to real systems or data.
+- Offers a downloadable public Windows Security `.evtx` sample in the upload panel.
 
 ## Privacy and limits
+
+The downloadable `sample-security.evtx` is a 7-record clean Security log from the [evtx parser's public test corpus](https://github.com/omerbenamram/evtx/tree/master/samples), licensed with the parser under MIT/Apache-2.0. It includes event IDs 5152, 4611, 4776, 4625, 5157, and 4673. It is provided for parser practice; the existing synthetic sample report demonstrates AuthLens' detections.
 
 The deployed site is static. The selected log file is read by the browser and passed to the Rust WebAssembly analyzer in the same tab; the public site has no backend, analytics, or log upload endpoint. It does not store log contents in browser storage. The optional Docker lab runs a local Rust server with in-memory activity records. Use only logs you are permitted to analyze, and avoid putting employer or customer data in public issue reports.
 
