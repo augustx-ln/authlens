@@ -35,6 +35,8 @@ const formatTime = (value: number) => new Intl.DateTimeFormat('en', {
 export default function LiveLab() {
   const [data, setData] = useState<Snapshot | null>(null)
   const [connected, setConnected] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportStatus, setExportStatus] = useState('')
 
   useEffect(() => {
     let active = true
@@ -59,6 +61,34 @@ export default function LiveLab() {
   const targetUrl = data?.targetUrl ?? 'Waiting for target address…'
   const latest = data?.events.slice(0, 100) ?? []
 
+  async function downloadEvents() {
+    if (!data?.events.length || exporting) return
+    setExporting(true)
+    setExportStatus('')
+    try {
+      const wasm = await import('./wasm/pkg/authlens_analyzer.js')
+      await wasm.default()
+      const bytes = wasm.export_live_evtx(data.events)
+      if (new TextDecoder().decode(bytes.slice(0, 8)) !== 'ElfFile\0') {
+        throw new Error('Export did not contain an EVTX file')
+      }
+      const blob = new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `authlens-live-events-${new Date().toISOString().replace(/[:.]/g, '-')}.evtx`
+      document.body.append(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      setExportStatus(`Downloaded ${data.events.length.toLocaleString()} retained events.`)
+    } catch {
+      setExportStatus('EVTX download failed. Check the live monitor connection.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return <div className="live-shell">
     <header className="live-topbar">
       <div className="live-brand"><span className="live-brand-mark">◇</span><strong>auth<span>lens</span></strong><span className="live-tag">DOCKER LAB</span></div>
@@ -80,10 +110,10 @@ export default function LiveLab() {
         {data?.findings.length ? <div className="live-findings">{data.findings.map(finding => <article key={finding.id}><div><span className={`live-severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><h3>{finding.title}</h3><p>{finding.evidence}</p></div><div className="live-finding-meta"><strong>{finding.source}</strong><span>First {formatTime(finding.firstMs)} · Latest {formatTime(finding.lastMs)}</span></div></article>)}</div> : <div className="live-empty">No scan patterns yet. Open the target or run the lab commands from Kali to see activity.</div>}
       </section>
       <section className="live-panel">
-        <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2>Latest activity</h2></div><span>{latest.length.toLocaleString()} shown</span></div>
+        <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2>Latest activity</h2></div><div className="live-panel-actions"><span>{latest.length.toLocaleString()} shown · {data?.events.length.toLocaleString() ?? 0} retained</span><button className="live-download" type="button" onClick={downloadEvents} disabled={!data?.events.length || exporting} aria-label="Download live events as an EVTX file">{exporting ? 'Creating EVTX…' : 'Download .evtx'}</button>{exportStatus && <small className="live-export-status" role="status">{exportStatus}</small>}</div></div>
         <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Source</th><th>Type</th><th>Request / connection</th><th>Result</th></tr></thead><tbody>{latest.length ? latest.map((event, index) => <tr key={`${event.atMs}-${event.source}-${index}`}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td>{event.kind === 'http' ? 'HTTP' : 'TCP'}</td><td>{event.detail}</td><td>{event.status ?? 'Accepted'}</td></tr>) : <tr><td colSpan={5} className="live-empty-cell">Waiting for traffic to the lab target.</td></tr>}</tbody></table></div>
       </section>
-      <p className="live-footnote">Findings indicate patterns to investigate, not proof of a specific tool. Monitor data stays in container memory and clears when the container restarts.</p>
+      <p className="live-footnote">The download contains up to 500 AuthLens lab events in EVTX format; it is not a Windows Security log from this laptop. Events stay in container memory and clear when it restarts. Findings indicate patterns to investigate, not proof of a specific tool.</p>
     </main>
   </div>
 }

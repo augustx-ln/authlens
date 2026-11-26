@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+mod live_evtx;
+
 use evtx::EvtxParser;
 use js_sys::{Array, Reflect, Uint8Array};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 const MAX_CASE_BYTES: usize = 25 * 1024 * 1024;
@@ -13,6 +15,18 @@ const SPRAY_ACCOUNTS: usize = 5;
 const SPRAY_FAILURES: usize = 8;
 const TEN_MINUTES: i64 = 10 * 60;
 const THIRTY_MINUTES: i64 = 30 * 60;
+const MAX_LIVE_EVENTS: usize = 500;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveEvent {
+    at_ms: u64,
+    source: String,
+    kind: String,
+    detail: String,
+    port: u16,
+    status: Option<u16>,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +73,18 @@ struct Report {
     skipped_lines: usize,
     truncated: bool,
     findings_truncated: bool,
+}
+
+#[wasm_bindgen]
+pub fn export_live_evtx(events: JsValue) -> Result<Vec<u8>, JsValue> {
+    let events: Vec<LiveEvent> = serde_wasm_bindgen::from_value(events)
+        .map_err(|_| JsValue::from_str("Invalid live event data."))?;
+    if events.len() > MAX_LIVE_EVENTS {
+        return Err(JsValue::from_str(
+            "The live export contains too many events.",
+        ));
+    }
+    live_evtx::encode(&events).map_err(|_| JsValue::from_str("Could not create the EVTX file."))
 }
 
 struct InputFile {
@@ -383,9 +409,18 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         .find(|node| node.is_element() && node.tag_name().name() == "EventID")
         .and_then(|node| node.text())
         .and_then(|value| value.parse::<u32>().ok());
-    let Some(event_id @ (4624 | 4625 | 4672 | 4720 | 4722 | 4724 | 4725 | 4728 | 4732 | 4756)) =
-        event_id
-    else {
+    let provider = document
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "Provider")
+        .and_then(|node| node.attribute("Name"))
+        .unwrap_or("");
+    let authlens_live = provider == "AuthLens-LiveLab";
+    let Some(event_id) = event_id.filter(|id| {
+        matches!(
+            *id,
+            4624 | 4625 | 4672 | 4720 | 4722 | 4724 | 4725 | 4728 | 4732 | 4756
+        ) || (authlens_live && matches!(*id, 1000 | 1001))
+    }) else {
         return Ok(None);
     };
 
@@ -405,8 +440,22 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         .and_then(|node| node.attribute("SystemTime"))
         .unwrap_or("Unknown time");
     let epoch = parse_iso_time(timestamp);
-    let source_ip = get(&["IpAddress"]).unwrap_or("Unknown");
+    let source_ip = get(&["IpAddress", "SourceAddress"]).unwrap_or("Unknown");
     let (category, action, target, actor, outcome) = match event_id {
+        1000 if authlens_live => (
+            "network_activity",
+            "TCP connection observed",
+            get(&["DestinationPort"]),
+            None,
+            "activity",
+        ),
+        1001 if authlens_live => (
+            "network_activity",
+            "HTTP request observed",
+            get(&["DestinationPort"]),
+            None,
+            "activity",
+        ),
         4624 => (
             "authentication",
             "Successful sign-in",
@@ -480,6 +529,14 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         _ => return Ok(None),
     };
     let action = match event_id {
+        1000 if authlens_live => {
+            format!("TCP connection: {}", get(&["Detail"]).unwrap_or("Unknown"))
+        }
+        1001 if authlens_live => format!(
+            "HTTP request: {} ({})",
+            get(&["Detail"]).unwrap_or("Unknown"),
+            get(&["ResponseStatus"]).unwrap_or("unknown status")
+        ),
         4672 => format!(
             "Special privileges assigned: {}",
             get(&["PrivilegeList"]).unwrap_or("Unknown")

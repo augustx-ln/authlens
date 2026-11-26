@@ -5,7 +5,7 @@ import LiveLab from './LiveLab.tsx'
 import './App.css'
 
 type Outcome = 'failed' | 'success' | 'activity'
-type Category = 'authentication' | 'privilege' | 'account_change'
+type Category = 'authentication' | 'privilege' | 'account_change' | 'network_activity'
 
 type AuthEvent = {
   timestamp: string

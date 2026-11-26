@@ -47,6 +47,8 @@ Open the local address printed by Vite. The generated WebAssembly package is int
 
 This lab puts the target web page and seven TCP probe ports in a Docker container. AuthLens records connections and HTTP requests as they arrive. The monitor is published only on Windows `localhost:3000`; target ports 8080–8087 are published only on the Windows IP you select for Kali. No Windows event logging or log upload is required.
 
+The event stream can download the latest 500 retained lab events as a valid `.evtx` file. These are synthetic `AuthLens-LiveLab` records in the Windows Application channel, not Security events collected from the host. AuthLens can read the exported file through its normal upload flow.
+
 1. Start Docker Desktop in Linux-container mode. In PowerShell, find the Windows address on the network shared with Kali:
 
    ```powershell
