@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import demoLog from './assets/demo-auth.log?raw'
 import demoActivityLog from './assets/demo-activity.log?raw'
+import LiveLab from './LiveLab.tsx'
 import './App.css'
 
 type Outcome = 'failed' | 'success' | 'activity'
@@ -83,6 +84,11 @@ async function loadAnalyzer() {
 }
 
 function App() {
+  if (window.location.pathname === '/monitor') return <LiveLab />
+  return <FileAnalysis />
+}
+
+function FileAnalysis() {
   const fileInput = useRef<HTMLInputElement>(null)
   const [report, setReport] = useState<Report | null>(null)
   const [caseName, setCaseName] = useState('')

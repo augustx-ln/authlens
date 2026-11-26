@@ -1,0 +1,53 @@
+.live-shell { min-height: 100vh; color: var(--color-text); }
+.live-topbar { height: 72px; padding: 0 max(calc((100vw - 1260px)/2), 32px); display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--color-border-soft); }
+.live-topbar > a { color: var(--color-text-secondary); font-size: 13px; }
+.live-topbar > a:hover { color: var(--color-accent); }
+.live-brand { display: flex; align-items: center; gap: 10px; font-size: 19px; letter-spacing: -.04em; }
+.live-brand strong span { color: var(--color-accent); }
+.live-brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #347664; border-radius: 11px; background: #122a27; color: var(--color-accent); font-size: 26px; }
+.live-tag { margin-left: 8px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.live-main { width: min(100% - 48px, 1260px); margin: 0 auto; padding: 48px 0 60px; }
+.live-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
+.live-kicker { margin: 0; color: var(--color-accent); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.live-heading h1 { margin: 11px 0 12px; font-size: clamp(34px, 4vw, 54px); font-weight: 650; letter-spacing: -.05em; line-height: 1.1; }
+.live-heading p:last-child { margin: 0; color: var(--color-text-secondary); font-size: 16px; line-height: 1.5; }
+.live-status { display: inline-flex; align-items: center; gap: 9px; flex: 0 0 auto; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text-muted); background: var(--color-surface); font-size: 13px; }
+.live-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--color-text-muted); }
+.live-status.is-connected { color: var(--color-accent); border-color: #347664; }
+.live-status.is-connected i { background: var(--color-accent); box-shadow: 0 0 0 4px #62e0bd22; }
+.live-target { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 24px; border: 1px solid #347664; border-radius: 16px; background: #10221f; }
+.live-target div { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.live-target span { color: var(--color-accent); font-size: 11px; font-weight: 700; }
+.live-target strong { overflow-wrap: anywhere; font-size: 19px; font-weight: 630; font-variant-numeric: tabular-nums; }
+.live-target small { color: var(--color-text-secondary); font-size: 12px; }
+.live-target a { flex: 0 0 auto; padding: 10px 14px; border-radius: 10px; background: var(--color-accent); color: #092119; font-size: 13px; font-weight: 700; }
+.live-target a:hover { background: var(--color-accent-strong); }
+.live-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0 24px; }
+.live-metrics > div { display: flex; flex-direction: column; gap: 7px; padding: 20px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface-raised); }
+.live-metrics span { color: var(--color-text-secondary); font-size: 12px; }
+.live-metrics strong { font-size: 29px; line-height: 1; font-variant-numeric: tabular-nums; }
+.live-metrics small { color: var(--color-text-muted); font-size: 12px; }
+.live-panel { overflow: hidden; margin-top: 18px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface); }
+.live-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--color-border-soft); }
+.live-panel-heading h2 { margin: 5px 0 0; font-size: 19px; font-weight: 630; }
+.live-panel-heading > span { color: var(--color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.live-findings { max-height: 330px; overflow: auto; }
+.live-findings article { display: flex; justify-content: space-between; gap: 20px; padding: 18px 24px; border-bottom: 1px solid var(--color-border-soft); }
+.live-findings article:last-child { border: 0; }
+.live-findings h3 { margin: 8px 0 5px; font-size: 15px; }
+.live-findings p { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.live-severity { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.live-severity.medium { color: var(--color-warning); }
+.live-severity.info { color: var(--color-info); }
+.live-finding-meta { display: flex; flex-direction: column; align-items: end; gap: 6px; min-width: 135px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.live-finding-meta span { color: var(--color-text-muted); text-align: right; }
+.live-empty { padding: 34px 24px; color: var(--color-text-muted); font-size: 14px; }
+.live-table-scroll { max-height: 470px; overflow: auto; }
+.live-table-scroll table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.live-table-scroll th { position: sticky; top: 0; z-index: 1; padding: 12px 18px; border-bottom: 1px solid var(--color-border); background: #101c26; color: var(--color-text-secondary); font-weight: 600; white-space: nowrap; }
+.live-table-scroll td { padding: 13px 18px; border-bottom: 1px solid var(--color-border-soft); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.live-table-scroll td:nth-child(2) { color: var(--color-text); }
+.live-table-scroll td:nth-child(4) { min-width: 260px; overflow-wrap: anywhere; }
+.live-table-scroll .live-empty-cell { padding: 34px 18px; text-align: center; color: var(--color-text-muted); }
+.live-footnote { margin: 18px 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 700px) { .live-main { width: min(100% - 24px, 1260px); padding-top: 28px; } .live-topbar { padding: 0 12px; } .live-tag { display: none; } .live-heading, .live-target, .live-findings article { align-items: stretch; flex-direction: column; } .live-metrics { grid-template-columns: 1fr; } .live-finding-meta { align-items: start; } .live-finding-meta span { text-align: left; } }

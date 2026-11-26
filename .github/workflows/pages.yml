@@ -35,6 +35,8 @@ jobs:
       - uses: jetli/wasm-pack-action@v0.4.0
       - name: Check Rust formatting
         run: cargo fmt --all --check
+      - name: Test Docker lab detector
+        run: cargo test -p authlens-lab
       - name: Build Rust WebAssembly analyzer
         working-directory: crates/analyzer
         run: wasm-pack build --target web --out-dir ../../web/src/wasm/pkg

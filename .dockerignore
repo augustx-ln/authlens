@@ -1,0 +1,5 @@
+.git
+target
+web/node_modules
+web/src/wasm/pkg
+.playwright-cli

@@ -1,0 +1,15 @@
+services:
+  lab:
+    build: .
+    environment:
+      LAB_BIND_IP: ${LAB_BIND_IP}
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "${LAB_BIND_IP:?Set LAB_BIND_IP to your Kali-facing Windows IP}:8080-8087:8080-8087"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 256m

@@ -4,6 +4,8 @@ AuthLens is a browser-based security log triage workspace. It uses a Rust WebAss
 
 **Try the web app:** https://augustx-ln.github.io/authlens/ (available after the first GitHub Pages deployment)
 
+**Run the isolated live lab:** see [Docker lab](#docker-lab-kali-to-container) below. The live monitor runs on your laptop; the public GitHub Pages site remains the file-analysis demo.
+
 ## What it does
 
 - Parses multiple Windows Security `.evtx` and Linux `.log`/`.txt`/auditd files together in one case.
@@ -16,7 +18,7 @@ AuthLens is a browser-based security log triage workspace. It uses a Rust WebAss
 
 ## Privacy and limits
 
-The deployed site is static. The selected log file is read by the browser and passed to the Rust WebAssembly analyzer in the same tab; AuthLens has no backend, analytics, or log upload endpoint. It does not store log contents in browser storage. Use only logs you are permitted to analyze, and avoid putting employer or customer data in public issue reports.
+The deployed site is static. The selected log file is read by the browser and passed to the Rust WebAssembly analyzer in the same tab; the public site has no backend, analytics, or log upload endpoint. It does not store log contents in browser storage. The optional Docker lab runs a local Rust server with in-memory activity records. Use only logs you are permitted to analyze, and avoid putting employer or customer data in public issue reports.
 
 The combined case is limited to 25 MB and analysis is capped at 100,000 events. The report retains all parsed events and caps findings at 500, prioritizing high and medium severity first. Detection thresholds are intentionally simple and can produce false positives or miss activity. Findings are investigation leads, not proof of compromise. The Linux parser targets common OpenSSH/sudo messages and selected auditd record types; syslog timestamps have no year or timezone, so AuthLens uses the current year and displays them in the browser's local timezone. Auditd coverage depends on the host recording those event types. Windows event collection depends on the relevant audit policies being enabled. Other event types and formats are ignored.
 
@@ -38,10 +40,52 @@ Pop-Location
 
 Open the local address printed by Vite. The generated WebAssembly package is intentionally built from the Rust source rather than checked into the repository.
 
+## Docker lab: Kali to container
+
+This lab puts the target web page and seven TCP probe ports in a Docker container. AuthLens records connections and HTTP requests as they arrive. The monitor is published only on Windows `localhost:3000`; target ports 8080–8087 are published only on the Windows IP you select for Kali. No Windows event logging or log upload is required.
+
+1. Start Docker Desktop in Linux-container mode. In PowerShell, find the Windows address on the network shared with Kali:
+
+   ```powershell
+   Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress
+   ```
+
+   For a Kali VM using VMware NAT, this is usually the `VMware Network Adapter VMnet8` address. Verify Kali can reach it. Use a host-only adapter instead if you want a network with no internet route. Do not use your Wi-Fi address for a private lab.
+
+2. Install Node.js 22+, Rust, `wasm-pack`, and Docker Desktop if needed (same local build prerequisites as above). From the repository root, bind the target to that address and start the container. Replace the example address with yours:
+
+   ```powershell
+   .\scripts\start-lab.ps1 -LabBindIp '192.168.175.1'
+   ```
+
+   The script builds the Rust WebAssembly analyzer and React frontend locally, then builds the small Rust lab image and opens the monitor. If Kali uses VMware NAT, you can omit `-LabBindIp` and the script will select the VMnet8 address.
+
+3. Open [the live monitor](http://localhost:3000/monitor) on Windows. From Kali, replace the example IP with the same Windows lab address:
+
+   ```bash
+   curl http://192.168.175.1:8080/
+   nmap -sT -Pn -p 8081-8087 192.168.175.1
+   for path in admin backup config debug login test secret status; do curl -s -o /dev/null "http://192.168.175.1:8080/$path"; done
+   curl -A 'WhatWeb/0.5' http://192.168.175.1:8080/
+   ```
+
+   The TCP scan produces a finding after four distinct probe ports in 30 seconds. The missing-page test produces a finding after six distinct 404 paths in 60 seconds. The tool-style User-Agent produces a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
+
+4. Stop the target when finished:
+
+   ```powershell
+   docker compose down
+   ```
+
+If Kali cannot reach port 8080, check that both systems share the VM network and that Windows Firewall permits inbound TCP 8080–8087 from Kali's IP on the selected adapter. Keep any firewall exception scoped to Kali's address and remove it after the lab.
+
+The container sees connections to published ports only. A default Nmap SYN scan can complete without an application-level connection, and scans of unpublished or closed Windows host ports are outside this detector's view. Docker Desktop networking may present Kali traffic under a gateway IP; treat the displayed source as an observation from the container, not a guaranteed original IP. The detector ignores TCP connections during its first ten seconds because Docker Desktop may probe published ports at startup. Activity is held in memory (latest 500 events, latest 100 findings) and resets on container restart.
+
 ## Architecture
 
 - `crates/analyzer` — Rust parsers, normalization, detection rules, and the WebAssembly interface.
 - `web` — React and TypeScript interface, file handling, visualization, filtering, and exports.
+- `crates/lab`, `Dockerfile`, and `compose.yaml` — isolated live target, scan-pattern detection, and a local monitor.
 - `.github/workflows/pages.yml` — builds the Rust WebAssembly package and static website, then deploys it to GitHub Pages.
 
 The detection thresholds are fixed in the source: five failed attempts against one account within ten minutes; at least eight failures across five accounts from one source within ten minutes; and a same-source, same-account success within thirty minutes after a failure. Related authentication events from separate files in one case are evaluated together.

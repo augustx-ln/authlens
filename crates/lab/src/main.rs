@@ -1,0 +1,408 @@
+use axum::{
+    Json, Router,
+    extract::{ConnectInfo, State},
+    http::{HeaderValue, Request, StatusCode, header},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
+    routing::get,
+};
+use serde::Serialize;
+use std::{
+    collections::{HashSet, VecDeque},
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::net::TcpListener;
+use tower_http::services::{ServeDir, ServeFile};
+
+type Shared = Arc<Mutex<LabState>>;
+const PORTS: std::ops::RangeInclusive<u16> = 8081..=8087;
+const MAX_EVENTS: usize = 500;
+const MAX_FINDINGS: usize = 100;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Event {
+    at_ms: u64,
+    source: String,
+    kind: &'static str,
+    detail: String,
+    port: u16,
+    status: Option<u16>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Finding {
+    id: String,
+    title: &'static str,
+    severity: &'static str,
+    source: String,
+    evidence: String,
+    first_ms: u64,
+    last_ms: u64,
+    count: usize,
+}
+
+#[derive(Default)]
+struct LabState {
+    events: VecDeque<Event>,
+    findings: VecDeque<Finding>,
+    total_events: u64,
+    started_ms: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Snapshot {
+    events: Vec<Event>,
+    findings: Vec<Finding>,
+    total_events: u64,
+    target_url: String,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is before 1970")
+        .as_millis() as u64
+}
+
+impl LabState {
+    fn record(&mut self, event: Event) {
+        // shortcut: Docker Desktop probes published TCP ports at startup; ignore the first ten seconds.
+        if event.kind == "connection"
+            && self.started_ms != 0
+            && event.at_ms.saturating_sub(self.started_ms) < 10_000
+        {
+            return;
+        }
+        self.total_events += 1;
+        self.events.push_front(event.clone());
+        self.events.truncate(MAX_EVENTS);
+
+        if event.kind == "connection" {
+            let recent: Vec<_> = self
+                .events
+                .iter()
+                .filter(|item| {
+                    item.source == event.source
+                        && item.kind == "connection"
+                        && event.at_ms.saturating_sub(item.at_ms) <= 30_000
+                })
+                .collect();
+            let mut ports: Vec<_> = recent.iter().map(|item| item.port).collect();
+            ports.sort_unstable();
+            ports.dedup();
+            if ports.len() >= 4 {
+                self.upsert(
+                    format!("ports:{}", event.source),
+                    "Possible TCP connect scan",
+                    "Medium",
+                    &event,
+                    format!(
+                        "{} distinct lab ports in 30 seconds: {ports:?}",
+                        ports.len()
+                    ),
+                    ports.len(),
+                );
+            }
+        } else if event.kind == "http" {
+            let paths: HashSet<_> = self
+                .events
+                .iter()
+                .filter(|item| {
+                    item.source == event.source
+                        && item.kind == "http"
+                        && item.status == Some(404)
+                        && event.at_ms.saturating_sub(item.at_ms) <= 60_000
+                })
+                .map(|item| item.detail.as_str())
+                .collect();
+            if paths.len() >= 6 {
+                self.upsert(
+                    format!("paths:{}", event.source),
+                    "Possible web path enumeration",
+                    "Medium",
+                    &event,
+                    format!("{} distinct missing paths in 60 seconds", paths.len()),
+                    paths.len(),
+                );
+            }
+        }
+    }
+
+    fn fingerprint(&mut self, event: &Event, reason: &str) {
+        self.upsert(
+            format!("fingerprint:{}", event.source),
+            "Possible web fingerprinting",
+            "Info",
+            event,
+            reason.to_owned(),
+            1,
+        );
+    }
+
+    fn upsert(
+        &mut self,
+        id: String,
+        title: &'static str,
+        severity: &'static str,
+        event: &Event,
+        evidence: String,
+        count: usize,
+    ) {
+        if let Some(index) = self.findings.iter().position(|item| item.id == id) {
+            let mut finding = self.findings.remove(index).expect("finding exists");
+            finding.last_ms = event.at_ms;
+            finding.evidence = evidence;
+            finding.count = count;
+            self.findings.push_front(finding);
+        } else {
+            self.findings.push_front(Finding {
+                id,
+                title,
+                severity,
+                source: event.source.clone(),
+                evidence,
+                first_ms: event.at_ms,
+                last_ms: event.at_ms,
+                count,
+            });
+            self.findings.truncate(MAX_FINDINGS);
+        }
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            events: self.events.iter().cloned().collect(),
+            findings: self.findings.iter().cloned().collect(),
+            total_events: self.total_events,
+            target_url: format!(
+                "http://{}:8080/",
+                std::env::var("LAB_BIND_IP").unwrap_or_else(|_| "localhost".to_owned())
+            ),
+        }
+    }
+}
+
+async fn snapshot(State(state): State<Shared>) -> impl IntoResponse {
+    let data = state.lock().expect("lab state mutex poisoned").snapshot();
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(data),
+    )
+}
+
+async fn track_http(
+    State(state): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().chars().take(180).collect::<String>();
+    let user_agent = request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(180)
+        .collect::<String>();
+    let response = next.run(request).await;
+    let event = Event {
+        at_ms: now_ms(),
+        source: peer.ip().to_string(),
+        kind: "http",
+        detail: path.clone(),
+        port: 8080,
+        status: Some(response.status().as_u16()),
+    };
+    let mut lab = state.lock().expect("lab state mutex poisoned");
+    lab.record(event.clone());
+    let agent = user_agent.to_ascii_lowercase();
+    let path_lower = path.to_ascii_lowercase();
+    let known_tool = [
+        "nmap",
+        "nikto",
+        "whatweb",
+        "nuclei",
+        "gobuster",
+        "dirbuster",
+        "ffuf",
+    ]
+    .iter()
+    .find(|tool| agent.contains(**tool));
+    let known_path = [
+        "/.git/",
+        "/wp-admin",
+        "/server-status",
+        "/phpinfo.php",
+        "/actuator/",
+    ]
+    .iter()
+    .find(|probe| path_lower.starts_with(**probe));
+    if let Some(tool) = known_tool {
+        lab.fingerprint(&event, &format!("Tool signature in User-Agent: {tool}"));
+    } else if let Some(probe) = known_path {
+        lab.fingerprint(
+            &event,
+            &format!("Common fingerprint path requested: {probe}"),
+        );
+    }
+    response
+}
+
+async fn target_home() -> Html<&'static str> {
+    Html(include_str!("target.html"))
+}
+
+async fn target_missing() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
+async fn listen_probe(listener: TcpListener, port: u16, state: Shared) -> std::io::Result<()> {
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        state
+            .lock()
+            .expect("lab state mutex poisoned")
+            .record(Event {
+                at_ms: now_ms(),
+                source: peer.ip().to_string(),
+                kind: "connection",
+                detail: format!("TCP connection to lab port {port}"),
+                port,
+                status: None,
+            });
+        drop(stream);
+    }
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let state = Arc::new(Mutex::new(LabState {
+        started_ms: now_ms(),
+        ..LabState::default()
+    }));
+    for port in PORTS {
+        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = listen_probe(listener, port, state).await {
+                eprintln!("Lab port {port} stopped: {error}");
+            }
+        });
+    }
+
+    let target = Router::new()
+        .route("/", get(target_home))
+        .route(
+            "/robots.txt",
+            get(|| async { "User-agent: *\nDisallow: /admin\n" }),
+        )
+        .route(
+            "/api/health",
+            get(|| async { Json(serde_json::json!({"status":"ok"})) }),
+        )
+        .fallback(target_missing)
+        .layer(middleware::from_fn_with_state(state.clone(), track_http))
+        .with_state(state.clone());
+    let target_listener = TcpListener::bind("0.0.0.0:8080").await?;
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(
+            target_listener,
+            target.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        {
+            eprintln!("Target web server stopped: {error}");
+        }
+    });
+
+    let dist = std::env::var("AUTHLENS_WEB_DIST").unwrap_or_else(|_| "web/dist".to_owned());
+    let monitor = Router::new()
+        .route("/api/live", get(snapshot))
+        .route_service("/monitor", ServeFile::new(format!("{dist}/index.html")))
+        .nest_service("/assets", ServeDir::new(format!("{dist}/assets")))
+        .with_state(state);
+    let monitor_listener = TcpListener::bind("0.0.0.0:3000").await?;
+    println!("AuthLens lab monitor: http://localhost:3000/monitor");
+    axum::serve(monitor_listener, monitor).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(
+        at_ms: u64,
+        source: &str,
+        kind: &'static str,
+        detail: &str,
+        port: u16,
+        status: Option<u16>,
+    ) -> Event {
+        Event {
+            at_ms,
+            source: source.into(),
+            kind,
+            detail: detail.into(),
+            port,
+            status,
+        }
+    }
+
+    #[test]
+    fn scan_requires_four_distinct_ports_from_one_source_in_window() {
+        let mut lab = LabState::default();
+        for port in 8081..=8083 {
+            lab.record(event(1_000, "192.0.2.1", "connection", "", port, None));
+        }
+        lab.record(event(1_000, "192.0.2.2", "connection", "", 8084, None));
+        lab.record(event(1_000, "192.0.2.1", "connection", "", 8081, None));
+        assert!(lab.findings.is_empty());
+        lab.record(event(2_000, "192.0.2.1", "connection", "", 8084, None));
+        assert_eq!(lab.findings[0].count, 4);
+        lab.record(event(40_000, "192.0.2.3", "connection", "", 8085, None));
+        assert_eq!(lab.findings.len(), 1);
+    }
+
+    #[test]
+    fn path_enumeration_counts_distinct_missing_paths_only() {
+        let mut lab = LabState::default();
+        for n in 0..5 {
+            lab.record(event(
+                1_000,
+                "192.0.2.1",
+                "http",
+                &format!("/bad/{n}"),
+                8080,
+                Some(404),
+            ));
+        }
+        lab.record(event(1_000, "192.0.2.1", "http", "/bad/0", 8080, Some(404)));
+        lab.record(event(1_000, "192.0.2.2", "http", "/bad/5", 8080, Some(404)));
+        assert!(lab.findings.is_empty());
+        lab.record(event(2_000, "192.0.2.1", "http", "/bad/5", 8080, Some(404)));
+        assert_eq!(lab.findings[0].title, "Possible web path enumeration");
+    }
+
+    #[test]
+    fn startup_probe_connections_are_ignored() {
+        let mut lab = LabState {
+            started_ms: 1_000,
+            ..LabState::default()
+        };
+        for port in 8081..=8087 {
+            lab.record(event(2_000, "172.18.0.1", "connection", "", port, None));
+        }
+        assert!(lab.findings.is_empty());
+        assert!(lab.events.is_empty());
+        for port in 8081..=8084 {
+            lab.record(event(11_001, "172.18.0.1", "connection", "", port, None));
+        }
+        assert_eq!(lab.findings[0].title, "Possible TCP connect scan");
+    }
+}
