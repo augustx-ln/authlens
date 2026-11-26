@@ -33,6 +33,7 @@
 .github-link:hover { color: var(--color-accent-strong); }
 
 main { width: min(100% - 64px, 1260px); margin: 0 auto; padding: 50px 0 28px; }
+main.report-layout { width: min(100% - 24px, 1520px); }
 .hero-row { margin: 0 auto 34px; padding: 0 4px; }
 .eyebrow, .section-kicker { margin: 0; color: var(--color-accent); font-size: 12px; font-weight: 650; letter-spacing: .035em; }
 .hero-row h1 { max-width: 850px; margin: 16px 0 14px; color: var(--color-text); font-size: clamp(38px, 4.8vw, 58px); font-weight: 650; line-height: 1.06; letter-spacing: -.052em; text-wrap: balance; }
@@ -198,7 +199,22 @@ main { width: min(100% - 64px, 1260px); margin: 0 auto; padding: 50px 0 28px; }
 .table-tools select:focus-visible { border-color: var(--color-accent); box-shadow: 0 0 0 3px #62e0bd22; }
 .row-count { margin-left: auto; color: var(--color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table-scroll { overflow: auto; }
-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.event-section { --column-time: 13%; --column-event: 23%; --column-result: 8%; --column-account: 14%; --column-actor: 14%; --column-address: 12%; --column-platform: 8%; --column-eight: 8%; }
+.event-section.with-source { --column-event: 21%; --column-result: 7%; --column-account: 12%; --column-actor: 12%; --column-address: 11%; --column-platform: 7%; --column-eight: 11%; --column-nine: 6%; }
+.event-section.compact { --column-event: 25%; --column-account: 15%; --column-actor: 15%; --column-address: 14%; --column-platform: 10%; }
+.event-section.compact.with-source { --column-event: 22%; --column-account: 14%; --column-actor: 14%; --column-address: 12%; --column-platform: 7%; --column-eight: 10%; }
+table { width: 100%; min-width: 1260px; table-layout: fixed; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.event-section.compact table { min-width: 1160px; }
+.event-section.compact.with-source table { min-width: 1260px; }
+.event-section th:nth-child(1) { width: var(--column-time); }
+.event-section th:nth-child(2) { width: var(--column-event); }
+.event-section th:nth-child(3) { width: var(--column-result); }
+.event-section th:nth-child(4) { width: var(--column-account); }
+.event-section th:nth-child(5) { width: var(--column-actor); }
+.event-section th:nth-child(6) { width: var(--column-address); }
+.event-section th:nth-child(7) { width: var(--column-platform); }
+.event-section th:nth-child(8) { width: var(--column-eight); }
+.event-section th:nth-child(9) { width: var(--column-nine); }
 thead { background: #121e28; }
 th { height: 42px; padding: 0 14px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
 td { height: 47px; padding: 0 14px; border-top: 1px solid var(--color-border-soft); color: var(--color-text-secondary); font-size: 12px; }
@@ -206,15 +222,15 @@ tbody tr:hover { background: #1b2933; }
 .compact td { height: 43px; }
 .time-cell, .ip-cell, .event-id-cell { color: #c1ced5; font-size: 11px; font-variant-numeric: tabular-nums; }
 .time-cell, .ip-cell, .event-id-cell { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; }
+.event-action-cell, .account-cell, .actor-cell, .ip-cell, .source-file-cell { white-space: normal; overflow-wrap: anywhere; }
 .account-cell { color: var(--color-text); font-weight: 620; }
 .outcome-text { display: inline-flex; align-items: center; gap: 7px; color: var(--color-danger); font-size: 12px; }
 .outcome-text i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .outcome-text.success { color: var(--color-success); }
 .outcome-text.activity { color: var(--color-info); }
-.event-action-cell { max-width: 270px; white-space: normal; }
 .event-action-cell b { display: block; color: var(--color-text); font-size: 12px; font-weight: 620; line-height: 1.4; }
 .event-action-cell small { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: 11px; }
-.source-file-cell { max-width: 190px; overflow: hidden; color: var(--color-text-secondary); text-overflow: ellipsis; }
+.source-file-cell { color: var(--color-text-secondary); }
 .empty-row { height: 110px; color: var(--color-text-muted); text-align: center; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 20px; background: #050a0ec7; backdrop-filter: blur(4px); animation: fade-in .16s ease-out; }
