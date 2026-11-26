@@ -1,23 +1,33 @@
 import { useMemo, useRef, useState } from 'react'
 import demoLog from './assets/demo-auth.log?raw'
+import demoActivityLog from './assets/demo-activity.log?raw'
 import './App.css'
+
+type Outcome = 'failed' | 'success' | 'activity'
+type Category = 'authentication' | 'privilege' | 'account_change'
 
 type AuthEvent = {
   timestamp: string
   sourceIp: string
   username: string
-  outcome: 'failed' | 'success'
+  actor: string | null
+  outcome: Outcome
+  category: Category
+  action: string
   platform: 'Linux' | 'Windows'
+  sourceFile: string
   eventId: number | null
 }
 
 type Alert = {
   id: string
   title: string
-  severity: 'High' | 'Medium'
+  severity: 'High' | 'Medium' | 'Info'
   description: string
   sourceIp: string
   username: string | null
+  actor: string | null
+  sourceFiles: string[]
   count: number
   firstSeen: string
   lastSeen: string
@@ -28,14 +38,17 @@ type Alert = {
 type Report = {
   events: AuthEvent[]
   alerts: Alert[]
+  sourceFiles: string[]
   parsedLines: number
   skippedLines: number
   truncated: boolean
+  findingsTruncated: boolean
 }
 
+type AnalysisInput = { name: string; content: string | Uint8Array }
 type View = 'overview' | 'events'
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024
+const MAX_CASE_BYTES = 25 * 1024 * 1024
 
 function formatTime(value: string) {
   if (!value || value === 'Unknown time') return 'Unknown time'
@@ -72,7 +85,7 @@ async function loadAnalyzer() {
 function App() {
   const fileInput = useRef<HTMLInputElement>(null)
   const [report, setReport] = useState<Report | null>(null)
-  const [fileName, setFileName] = useState('')
+  const [caseName, setCaseName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [view, setView] = useState<View>('overview')
@@ -80,49 +93,53 @@ function App() {
   const [outcomeFilter, setOutcomeFilter] = useState('all')
   const [activeAlert, setActiveAlert] = useState<Alert | null>(null)
 
-  const failedCount = report?.events.filter((event) => event.outcome === 'failed').length ?? 0
-  const sourceCount = new Set(report?.events.map((event) => event.sourceIp).filter((ip) => ip !== 'Unknown') ?? []).size
+  const failedCount = report?.events.filter((event) => event.category === 'authentication' && event.outcome === 'failed').length ?? 0
+  const accountChangeCount = report?.events.filter((event) => event.category === 'account_change').length ?? 0
+  const privilegeCount = report?.events.filter((event) => event.category === 'privilege').length ?? 0
   const filteredEvents = useMemo(() => report?.events.filter((event) => {
-    const matchesQuery = `${event.username} ${event.sourceIp} ${event.platform} ${event.eventId ?? ''}`.toLowerCase().includes(query.toLowerCase())
+    const matchesQuery = `${event.username} ${event.actor ?? ''} ${event.sourceIp} ${event.platform} ${event.eventId ?? ''} ${event.action} ${event.category} ${event.sourceFile}`.toLowerCase().includes(query.toLowerCase())
     const matchesOutcome = outcomeFilter === 'all' || event.outcome === outcomeFilter
     return matchesQuery && matchesOutcome
   }) ?? [], [report, query, outcomeFilter])
 
-  async function analyzeText(text: string, name: string) {
+  async function analyze(loadInputs: () => Promise<AnalysisInput[]>) {
     setBusy(true)
     setError('')
     try {
+      const inputs = await loadInputs()
       const wasm = await loadAnalyzer()
-      setReport(wasm.analyze_auth_log(text, new Date().getFullYear()) as Report)
-      setFileName(name)
+      setReport(wasm.analyze_case(inputs, new Date().getFullYear()) as Report)
+      setCaseName(inputs.length === 1 ? inputs[0].name : `Case with ${inputs.length} log files`)
       setView('overview')
+      setQuery('')
+      setOutcomeFilter('all')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The log could not be analyzed. Check the file and try again.')
+      setError(cause instanceof Error ? cause.message : 'The selected logs could not be analyzed. Check the files and try again.')
     } finally {
       setBusy(false)
     }
   }
 
-  async function analyzeFile(file: File) {
-    if (file.size > MAX_FILE_BYTES) {
-      setError('This file is larger than 25 MB. Choose a smaller log file.')
+  function analyzeFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList)
+    if (!files.length) return
+    if (files.reduce((sum, file) => sum + file.size, 0) > MAX_CASE_BYTES) {
+      setError('These files exceed the 25 MB total case limit. Choose a smaller set of logs.')
       return
     }
-    setBusy(true)
-    setError('')
-    try {
-      const wasm = await loadAnalyzer()
-      const result = file.name.toLowerCase().endsWith('.evtx')
-        ? wasm.analyze_evtx(new Uint8Array(await file.arrayBuffer())) as Report
-        : wasm.analyze_auth_log(await file.text(), new Date().getFullYear()) as Report
-      setReport(result)
-      setFileName(file.name)
-      setView('overview')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The log could not be analyzed. Check the file and try again.')
-    } finally {
-      setBusy(false)
-    }
+    void analyze(() => Promise.all(files.map(async (file) => ({
+      name: file.name,
+      content: file.name.toLowerCase().endsWith('.evtx')
+        ? new Uint8Array(await file.arrayBuffer())
+        : await file.text(),
+    }))))
+  }
+
+  function analyzeDemo() {
+    void analyze(async () => [
+      { name: 'synthetic-auth-demo.log', content: demoLog },
+      { name: 'synthetic-activity-demo.log', content: demoActivityLog },
+    ])
   }
 
   function download(name: string, body: string, type: string) {
@@ -142,7 +159,7 @@ function App() {
 
   function exportCsv() {
     if (!report) return
-    const rows = [['timestamp', 'platform', 'event_id', 'outcome', 'username', 'source_ip'], ...report.events.map((event) => [event.timestamp, event.platform, event.eventId ?? '', event.outcome, event.username, event.sourceIp])]
+    const rows = [['timestamp', 'category', 'action', 'outcome', 'username', 'actor', 'source_ip', 'platform', 'source_file', 'event_id'], ...report.events.map((event) => [event.timestamp, event.category, event.action, event.outcome, event.username, event.actor ?? '', event.sourceIp, event.platform, event.sourceFile, event.eventId ?? ''])]
     const csv = rows.map((row) => row.map((value) => {
       const text = String(value)
       const first = text.trimStart().charAt(0)
@@ -154,10 +171,11 @@ function App() {
 
   function reset() {
     setReport(null)
-    setFileName('')
+    setCaseName('')
     setQuery('')
     setOutcomeFilter('all')
     setError('')
+    setActiveAlert(null)
   }
 
   return (
@@ -177,9 +195,9 @@ function App() {
       <main id="top">
         <section className="hero-row">
           <div>
-            <div className="eyebrow"><span className="eyebrow-line" /> SECURITY LOG WORKSPACE <span className="eyebrow-divider">/</span> AUTHENTICATION</div>
-            <h1>See the story behind<br /><span>every sign-in.</span></h1>
-            <p className="hero-copy">Spot brute-force attempts and suspicious login patterns in Windows and Linux authentication logs.</p>
+            <div className="eyebrow"><span className="eyebrow-line" /> SECURITY LOG WORKSPACE <span className="eyebrow-divider">/</span> ACTIVITY TRIAGE</div>
+            <h1>See the story behind<br /><span>system activity.</span></h1>
+            <p className="hero-copy">Review suspicious sign-ins, privileged activity, and account changes across Windows and Linux logs.</p>
           </div>
           <div className="hero-aside">
             <div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="orbit-core"><Icon name="shield" size={32} /></div>
@@ -187,49 +205,52 @@ function App() {
           </div>
         </section>
 
-        <section className="workspace-card" aria-label="Authentication log analysis">
+        <section className="workspace-card" aria-label="Security log analysis">
           {!report ? (
             <div className="welcome-panel">
               <div className="welcome-head">
-                <div><span className="section-kicker">START AN INVESTIGATION</span><h2>Bring in an authentication log</h2><p>Choose a Windows Security event log or a Linux OpenSSH authentication log.</p></div>
-                <div className="format-badges"><span><i className="win-icon">W</i> Windows <small>.evtx</small></span><span><i className="linux-icon">L</i> Linux <small>.log / .txt</small></span></div>
+                <div><span className="section-kicker">START AN INVESTIGATION</span><h2>Bring logs into a case</h2><p>Choose one or more Windows Security or Linux authentication and audit logs. AuthLens will correlate them in one timeline.</p></div>
+                <div className="format-badges"><span><i className="win-icon">W</i> Windows <small>.evtx</small></span><span><i className="linux-icon">L</i> Linux <small>.log / audit</small></span></div>
               </div>
-              <button className={`dropzone ${busy ? 'is-busy' : ''}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void analyzeFile(file) }} disabled={busy}>
+              <button className={`dropzone ${busy ? 'is-busy' : ''}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); analyzeFiles(event.dataTransfer.files) }} disabled={busy}>
                 <span className="upload-icon"><Icon name={busy ? 'spark' : 'upload'} size={24} /></span>
-                <strong>{busy ? 'Analyzing locally…' : 'Drop a log file here, or browse'}</strong>
-                <span className="drop-caption">Maximum file size 25 MB <span>·</span> No upload required</span>
+                <strong>{busy ? 'Analyzing locally…' : 'Drop log files here, or browse'}</strong>
+                <span className="drop-caption">Maximum total case size 25 MB <span>·</span> No upload required</span>
                 {busy && <span className="progress-track"><i /></span>}
               </button>
-              <input ref={fileInput} type="file" accept=".evtx,.log,.txt,.authlog" hidden onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void analyzeFile(file); event.currentTarget.value = '' }} />
+              <input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
               {error && <div className="error-message" role="alert"><Icon name="close" size={16} /> {error}</div>}
-              <div className="welcome-foot"><span className="safe-note"><Icon name="lock" size={15} /> Your logs stay in this browser and are never sent to a server.</span><button className="demo-button" onClick={() => void analyzeText(demoLog, 'synthetic-auth-demo.log')} disabled={busy}><Icon name="spark" size={16} /> Try a sample investigation <Icon name="arrow" size={15} /></button></div>
-              <div className="detection-strip"><span>DETECTION COVERAGE</span><b>Repeated login failures</b><i /><b>Password spray</b><i /><b>Success after failures</b><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
+              <div className="welcome-foot"><span className="safe-note"><Icon name="lock" size={15} /> Your logs stay in this browser and are never sent to a server.</span><button className="demo-button" onClick={analyzeDemo} disabled={busy}><Icon name="spark" size={16} /> Try a sample investigation <Icon name="arrow" size={15} /></button></div>
+              <div className="detection-strip"><span>DETECTION COVERAGE</span><b>Sign-in patterns</b><i /><b>Privileged activity</b><i /><b>Account changes</b><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
             </div>
           ) : (
             <>
               <div className="report-header">
-                <div className="report-title-group"><span className="report-icon"><Icon name="file" size={18} /></span><div><div className="section-kicker">INVESTIGATION REPORT</div><h2>{fileName}</h2></div><span className="loaded-chip"><Icon name="check" size={13} /> ANALYZED</span></div>
-                <div className="report-actions"><button className="quiet-button" onClick={exportCsv}><Icon name="download" size={15} /> CSV</button><button className="quiet-button" onClick={exportJson}><Icon name="download" size={15} /> JSON</button><button className="primary-button small" onClick={() => fileInput.current?.click()}><Icon name="upload" size={15} /> New file</button><button className="icon-button" onClick={reset} aria-label="Clear investigation"><Icon name="close" size={17} /></button><input ref={fileInput} type="file" accept=".evtx,.log,.txt,.authlog" hidden onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void analyzeFile(file); event.currentTarget.value = '' }} /></div>
+                <div className="report-title-group"><span className="report-icon"><Icon name="file" size={18} /></span><div><div className="section-kicker">INVESTIGATION REPORT</div><h2>{caseName}</h2></div><span className="loaded-chip"><Icon name="check" size={13} /> ANALYZED</span></div>
+                <div className="report-actions"><button className="quiet-button" onClick={exportCsv}><Icon name="download" size={15} /> CSV</button><button className="quiet-button" onClick={exportJson}><Icon name="download" size={15} /> JSON</button><button className="primary-button small" onClick={() => fileInput.current?.click()} disabled={busy}><Icon name="upload" size={15} /> New case</button><button className="icon-button" onClick={reset} aria-label="Clear investigation"><Icon name="close" size={17} /></button><input ref={fileInput} type="file" multiple accept=".evtx,.log,.txt,.authlog,.audit" hidden onChange={(event) => { if (event.currentTarget.files) analyzeFiles(event.currentTarget.files); event.currentTarget.value = '' }} /></div>
               </div>
-              <div className="privacy-line"><Icon name="lock" size={14} /> Parsed locally in your browser <span /> {report.parsedLines.toLocaleString()} authentication events <span />{report.truncated ? 'Analysis capped at 100,000 events' : 'Source file is not stored'}{report.skippedLines > 0 && <><span /> {report.skippedLines.toLocaleString()} records skipped</>}</div>
-              {report.parsedLines === 0 && <div className="info-message"><Icon name="file" size={15} /> No supported authentication events were found. AuthLens reads common OpenSSH auth logs and Windows Security event IDs 4624/4625.</div>}
+              <div className="privacy-line"><Icon name="lock" size={14} /> Parsed locally in your browser <span /> {report.parsedLines.toLocaleString()} events <span />{report.truncated ? 'Analysis capped at 100,000 events' : `${report.sourceFiles.length} source file${report.sourceFiles.length === 1 ? '' : 's'}`}{report.skippedLines > 0 && <><span /> {report.skippedLines.toLocaleString()} records skipped</>}</div>
+              {report.sourceFiles.length > 1 && <div className="source-files">Files in this case: {report.sourceFiles.join(' · ')}</div>}
+              {report.parsedLines === 0 && <div className="info-message"><Icon name="file" size={15} /> No supported events were found. AuthLens reads OpenSSH sign-ins, sudo commands, selected Linux auditd account records, and Windows Security event IDs 4624/4625/4672/4720/4722/4724/4725/4728/4732/4756.</div>}
+              {report.findingsTruncated && <div className="info-message"><Icon name="file" size={15} /> Findings are limited to the 500 highest-priority items; the event stream still includes every parsed event.</div>}
               {error && <div className="error-message" role="alert"><Icon name="close" size={16} /> {error}</div>}
               <div className="metric-grid">
-                <Metric label="AUTH EVENTS" value={report.parsedLines.toLocaleString()} note="Parsed from source" tone="neutral" />
-                <Metric label="DETECTIONS" value={String(report.alerts.length).padStart(2, '0')} note={report.alerts.length ? 'Needs analyst review' : 'No matched patterns'} tone={report.alerts.length ? 'amber' : 'green'} />
-                <Metric label="FAILED SIGN-INS" value={failedCount.toLocaleString()} note="Across all accounts" tone="red" />
-                <Metric label="SOURCE ADDRESSES" value={String(sourceCount).padStart(2, '0')} note="Unique remote IPs" tone="blue" />
+                <Metric label="TOTAL EVENTS" value={report.parsedLines.toLocaleString()} note="From all selected files" tone="neutral" />
+                <Metric label="FINDINGS" value={String(report.alerts.length).padStart(2, '0')} note={report.findingsTruncated ? '500-item display limit' : report.alerts.length ? 'Review in context' : 'No matched patterns'} tone={report.alerts.length ? 'amber' : 'green'} />
+                <Metric label="AUTH FAILURES" value={failedCount.toLocaleString()} note="Sign-in events" tone="red" />
+                <Metric label="ACCOUNT CHANGES" value={accountChangeCount.toLocaleString()} note="Audit activity" tone="blue" />
+                <Metric label="PRIVILEGE USE" value={privilegeCount.toLocaleString()} note="Sudo and Windows events" tone="amber" />
               </div>
               <nav className="report-tabs" aria-label="Report views"><button className={view === 'overview' ? 'active' : ''} onClick={() => setView('overview')}>Overview <span>{report.alerts.length}</span></button><button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}>Event stream <span>{report.events.length.toLocaleString()}</span></button></nav>
-              {view === 'overview' ? <Overview report={report} onSelectAlert={setActiveAlert} onViewEvents={() => setView('events')} /> : <EventTable events={filteredEvents} query={query} setQuery={setQuery} outcomeFilter={outcomeFilter} setOutcomeFilter={setOutcomeFilter} />}
+              {view === 'overview' ? <Overview report={report} onSelectAlert={setActiveAlert} onViewEvents={() => setView('events')} /> : <EventTable events={filteredEvents} query={query} setQuery={setQuery} outcomeFilter={outcomeFilter} setOutcomeFilter={setOutcomeFilter} showSource={report.sourceFiles.length > 1} />}
             </>
           )}
         </section>
 
-        <footer className="page-footer"><span>AUTHLENS <b>·</b> OPEN-SOURCE AUTHENTICATION TRIAGE</span><span>BUILT FOR DEFENDERS <b>·</b> NO SERVER. NO LOG UPLOADS.</span></footer>
+        <footer className="page-footer"><span>AUTHLENS <b>·</b> OPEN-SOURCE SECURITY LOG TRIAGE</span><span>BUILT FOR DEFENDERS <b>·</b> NO SERVER. NO LOG UPLOADS.</span></footer>
       </main>
 
-      {activeAlert && <div className="modal-backdrop" role="presentation" onClick={() => setActiveAlert(null)}><section className="alert-modal" role="dialog" aria-modal="true" aria-labelledby="alert-title" onClick={(event) => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setActiveAlert(null)} aria-label="Close finding details"><Icon name="close" /></button><span className={`severity-pill ${activeAlert.severity.toLowerCase()}`}>{activeAlert.severity} PRIORITY</span><h2 id="alert-title">{activeAlert.title}</h2><p>{activeAlert.description}</p><div className="modal-details"><div><span>SOURCE ADDRESS</span><b>{activeAlert.sourceIp}</b></div><div><span>ACCOUNT</span><b>{activeAlert.username ?? 'Multiple accounts'}</b></div><div><span>OBSERVED</span><b>{activeAlert.count} events</b></div><div><span>TIME WINDOW</span><b>{formatTime(activeAlert.firstSeen)} — {formatTime(activeAlert.lastSeen)}</b></div></div><a className="mitre-link" href={`https://attack.mitre.org/techniques/${activeAlert.technique.replace('.', '/')}/`} target="_blank" rel="noreferrer"><span><small>MITRE ATT&amp;CK</small><b>{activeAlert.technique} · {activeAlert.techniqueName}</b></span><Icon name="external" /></a><button className="primary-button modal-done" onClick={() => setActiveAlert(null)}>Back to investigation</button></section></div>}
+      {activeAlert && <div className="modal-backdrop" role="presentation" onClick={() => setActiveAlert(null)}><section className="alert-modal" role="dialog" aria-modal="true" aria-labelledby="alert-title" onClick={(event) => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setActiveAlert(null)} aria-label="Close finding details"><Icon name="close" /></button><span className={`severity-pill ${activeAlert.severity.toLowerCase()}`}>{activeAlert.severity === 'Info' ? 'ACTIVITY' : `${activeAlert.severity} PRIORITY`}</span><h2 id="alert-title">{activeAlert.title}</h2><p>{activeAlert.description}</p><div className="modal-details"><div><span>SOURCE ADDRESS</span><b>{activeAlert.sourceIp}</b></div><div><span>ACCOUNT / TARGET</span><b>{activeAlert.username ?? 'Multiple accounts'}</b></div><div><span>ACTOR</span><b>{activeAlert.actor ?? '—'}</b></div><div><span>SOURCE FILES</span><b>{activeAlert.sourceFiles.join(' · ')}</b></div><div><span>OBSERVED</span><b>{activeAlert.count} event{activeAlert.count === 1 ? '' : 's'}</b></div><div><span>TIME WINDOW</span><b>{formatTime(activeAlert.firstSeen)} — {formatTime(activeAlert.lastSeen)}</b></div></div>{activeAlert.technique ? <a className="mitre-link" href={`https://attack.mitre.org/techniques/${activeAlert.technique.replace('.', '/')}/`} target="_blank" rel="noreferrer"><span><small>MITRE ATT&amp;CK</small><b>{activeAlert.technique} · {activeAlert.techniqueName}</b></span><Icon name="external" /></a> : <div className="mitre-link"><span><small>ACTIVITY CONTEXT</small><b>{activeAlert.techniqueName}</b></span></div>}<button className="primary-button modal-done" onClick={() => setActiveAlert(null)}>Back to investigation</button></section></div>}
     </div>
   )
 }
@@ -240,28 +261,29 @@ function Metric({ label, value, note, tone }: { label: string; value: string; no
 
 function Overview({ report, onSelectAlert, onViewEvents }: { report: Report; onSelectAlert: (alert: Alert) => void; onViewEvents: () => void }) {
   const buckets = useMemo(() => {
-    const values = Array.from({ length: 12 }, (_, index) => ({ label: `${String(index * 2).padStart(2, '0')}:00`, failed: 0, success: 0 }))
+    const values = Array.from({ length: 12 }, (_, index) => ({ label: `${String(index * 2).padStart(2, '0')}:00`, failed: 0, success: 0, activity: 0 }))
     const timed = report.events.map((event) => ({ event, date: new Date(event.timestamp) })).filter((item) => !Number.isNaN(item.date.getTime()))
-    for (const { event, date } of timed) {
-      const bucket = values[Math.min(11, Math.floor(date.getHours() / 2))]
-      bucket[event.outcome] += 1
-    }
-    const peak = Math.max(1, ...values.map((item) => item.failed + item.success))
-    return values.map((item) => ({ ...item, height: (item.failed + item.success) / peak * 100, failedHeight: item.failed / Math.max(1, item.failed + item.success) * 100 }))
+    for (const { event, date } of timed) values[Math.min(11, Math.floor(date.getHours() / 2))][event.outcome] += 1
+    const peak = Math.max(1, ...values.map((item) => item.failed + item.success + item.activity))
+    return values.map((item) => {
+      const total = item.failed + item.success + item.activity
+      return { ...item, height: total / peak * 100, failedHeight: item.failed / Math.max(1, total) * 100, successHeight: item.success / Math.max(1, total) * 100, activityHeight: item.activity / Math.max(1, total) * 100 }
+    })
   }, [report.events])
 
   return <div className="overview-grid">
-    <section className="chart-panel"><div className="panel-heading"><div><span className="section-kicker">EVENT DISTRIBUTION</span><h3>Authentication activity</h3></div><div className="chart-legend"><span><i className="legend-fail" /> Failed</span><span><i className="legend-success" /> Successful</span></div></div><div className="chart-area"><div className="chart-y"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars-area"><div className="chart-guides"><i /><i /><i /><i /><i /></div>{buckets.map((bucket) => <div className="bar-column" key={bucket.label} title={`${bucket.label} · ${bucket.failed} failed, ${bucket.success} successful`}><div className="bar-stack" style={{ height: `${Math.max(bucket.height, bucket.height ? 5 : 0)}%` }}><i className="bar-success" style={{ height: `${100 - bucket.failedHeight}%` }} /><i className="bar-failed" style={{ height: `${bucket.failedHeight}%` }} /></div><span>{bucket.label}</span></div>)}</div></div><div className="chart-foot"><span><i className="pulse-dot" /> {report.events.length ? `${report.events.length.toLocaleString()} events plotted by local time` : 'No events to plot'}</span><span>2 HOUR INTERVALS</span></div></section>
-    <section className="findings-panel"><div className="panel-heading"><div><span className="section-kicker">RULE MATCHES</span><h3>Priority findings</h3></div><span className="findings-count">{String(report.alerts.length).padStart(2, '0')}</span></div>{report.alerts.length ? <div className="findings-list">{report.alerts.map((alert) => <button className="finding-row" key={alert.id} onClick={() => onSelectAlert(alert)}><span className={`finding-indicator ${alert.severity.toLowerCase()}`} /><span className="finding-content"><b>{alert.title}</b><small>{alert.sourceIp} <i>·</i> {alert.username ?? 'Multiple accounts'}</small></span><span className="finding-meta"><b>{alert.count}</b><small>{formatTime(alert.firstSeen)}</small></span><Icon name="arrow" size={16} /></button>)}</div> : <div className="no-findings"><span><Icon name="check" size={20} /></span><b>No matching patterns found</b><small>Review the event stream for context.</small></div>}<button className="panel-link" onClick={onViewEvents}>Review all events <Icon name="arrow" size={15} /></button></section>
-    <section className="events-panel"><div className="panel-heading"><div><span className="section-kicker">LATEST ACTIVITY</span><h3>Authentication events</h3></div><button className="text-link" onClick={onViewEvents}>View all <Icon name="arrow" size={14} /></button></div><EventTable events={report.events.slice(-6).reverse()} compact query="" setQuery={() => undefined} outcomeFilter="all" setOutcomeFilter={() => undefined} /></section>
-    <div className="coverage-note"><span className="coverage-icon"><Icon name="shield" size={17} /></span><span><b>Detection coverage</b><small>Repeated login failures · Password spray · Success after failures</small></span><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
+    <section className="chart-panel"><div className="panel-heading"><div><span className="section-kicker">EVENT DISTRIBUTION</span><h3>System activity</h3></div><div className="chart-legend"><span><i className="legend-fail" /> Failed</span><span><i className="legend-success" /> Successful</span><span><i className="legend-activity" /> Activity</span></div></div><div className="chart-area"><div className="chart-y"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars-area"><div className="chart-guides"><i /><i /><i /><i /><i /></div>{buckets.map((bucket) => <div className="bar-column" key={bucket.label} title={`${bucket.label} · ${bucket.failed} failed, ${bucket.success} successful, ${bucket.activity} activity`}><div className="bar-stack" style={{ height: `${Math.max(bucket.height, bucket.height ? 5 : 0)}%` }}><i className="bar-activity" style={{ height: `${bucket.activityHeight}%` }} /><i className="bar-success" style={{ height: `${bucket.successHeight}%` }} /><i className="bar-failed" style={{ height: `${bucket.failedHeight}%` }} /></div><span>{bucket.label}</span></div>)}</div></div><div className="chart-foot"><span><i className="pulse-dot" /> {report.events.length ? `${report.events.length.toLocaleString()} events plotted by local time` : 'No events to plot'}</span><span>2 HOUR INTERVALS</span></div></section>
+    <section className="findings-panel"><div className="panel-heading"><div><span className="section-kicker">RULE MATCHES</span><h3>Review findings</h3></div><span className="findings-count">{String(report.alerts.length).padStart(2, '0')}</span></div>{report.alerts.length ? <div className="findings-list">{report.alerts.slice(0, 12).map((alert) => <button className="finding-row" key={alert.id} onClick={() => onSelectAlert(alert)}><span className={`finding-indicator ${alert.severity.toLowerCase()}`} /><span className="finding-content"><b>{alert.title}</b><small>{alert.sourceFiles.join(' · ')} <i>·</i> {alert.username ?? 'Multiple accounts'}</small></span><span className="finding-meta"><b>{alert.count}</b><small>{formatTime(alert.firstSeen)}</small></span><Icon name="arrow" size={16} /></button>)}</div> : <div className="no-findings"><span><Icon name="check" size={20} /></span><b>No matching patterns found</b><small>Review the event stream for context.</small></div>}{report.alerts.length > 12 && <small className="more-findings">Showing 12 of {report.alerts.length} findings</small>}<button className="panel-link" onClick={onViewEvents}>Review all events <Icon name="arrow" size={15} /></button></section>
+    <section className="events-panel"><div className="panel-heading"><div><span className="section-kicker">LATEST ACTIVITY</span><h3>Recent security events</h3></div><button className="text-link" onClick={onViewEvents}>View all <Icon name="arrow" size={14} /></button></div><EventTable events={report.events.slice(-6).reverse()} compact query="" setQuery={() => undefined} outcomeFilter="all" setOutcomeFilter={() => undefined} showSource={report.sourceFiles.length > 1} /></section>
+    <div className="coverage-note"><span className="coverage-icon"><Icon name="shield" size={17} /></span><span><b>Detection coverage</b><small>Sign-in patterns · Privileged activity · Account creation and group changes</small></span><a href="https://attack.mitre.org/techniques/T1110/" target="_blank" rel="noreferrer">MITRE ATT&amp;CK <Icon name="external" size={12} /></a></div>
   </div>
 }
 
-function EventTable({ events, query, setQuery, outcomeFilter, setOutcomeFilter, compact = false }: { events: AuthEvent[]; query: string; setQuery: (value: string) => void; outcomeFilter: string; setOutcomeFilter: (value: string) => void; compact?: boolean }) {
+function EventTable({ events, query, setQuery, outcomeFilter, setOutcomeFilter, compact = false, showSource = false }: { events: AuthEvent[]; query: string; setQuery: (value: string) => void; outcomeFilter: string; setOutcomeFilter: (value: string) => void; compact?: boolean; showSource?: boolean }) {
+  const columns = (compact ? 7 : 8) + Number(showSource)
   return <div className={`event-section ${compact ? 'compact' : ''}`}>
-    {!compact && <div className="table-tools"><label className="search-box"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search user, IP, platform…" /></label><select aria-label="Filter by outcome" value={outcomeFilter} onChange={(event) => setOutcomeFilter(event.target.value)}><option value="all">All outcomes</option><option value="failed">Failed</option><option value="success">Successful</option></select><span className="row-count">{events.length.toLocaleString()} EVENTS</span></div>}
-    <div className="table-scroll"><table><thead><tr><th>TIME</th><th>RESULT</th><th>ACCOUNT</th><th>SOURCE ADDRESS</th><th>PLATFORM</th>{!compact && <th>EVENT ID</th>}</tr></thead><tbody>{events.length ? events.map((event, index) => <tr key={`${event.timestamp}-${event.sourceIp}-${event.username}-${index}`}><td className="time-cell">{formatTime(event.timestamp)}</td><td><span className={`outcome-tag ${event.outcome}`}><i />{event.outcome === 'failed' ? 'Failed' : 'Success'}</span></td><td className="account-cell">{event.username}</td><td className="ip-cell">{event.sourceIp}</td><td><span className={`platform-tag ${event.platform.toLowerCase()}`}>{event.platform === 'Windows' ? 'W' : 'L'}</span> {event.platform}</td>{!compact && <td className="event-id-cell">{event.eventId ?? '—'}</td>}</tr>) : <tr><td colSpan={compact ? 5 : 6} className="empty-row">No events match this search.</td></tr>}</tbody></table></div>
+    {!compact && <div className="table-tools"><label className="search-box"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search account, actor, event, file…" /></label><select aria-label="Filter by outcome" value={outcomeFilter} onChange={(event) => setOutcomeFilter(event.target.value)}><option value="all">All outcomes</option><option value="failed">Failed</option><option value="success">Successful</option><option value="activity">Activity</option></select><span className="row-count">{events.length.toLocaleString()} EVENTS</span></div>}
+    <div className="table-scroll"><table><thead><tr><th>TIME</th><th>EVENT</th><th>RESULT</th><th>ACCOUNT / TARGET</th><th>ACTOR</th><th>SOURCE ADDRESS</th><th>PLATFORM</th>{showSource && <th>SOURCE FILE</th>}{!compact && <th>EVENT ID</th>}</tr></thead><tbody>{events.length ? events.map((event, index) => <tr key={`${event.timestamp}-${event.sourceFile}-${event.sourceIp}-${event.username}-${index}`}><td className="time-cell">{formatTime(event.timestamp)}</td><td className="event-action-cell"><b>{event.action}</b><small>{event.category.replace('_', ' ')}</small></td><td><span className={`outcome-tag ${event.outcome}`}><i />{event.outcome === 'failed' ? 'Failed' : event.outcome === 'success' ? 'Success' : 'Activity'}</span></td><td className="account-cell">{event.username}</td><td>{event.actor ?? '—'}</td><td className="ip-cell">{event.sourceIp}</td><td><span className={`platform-tag ${event.platform.toLowerCase()}`}>{event.platform === 'Windows' ? 'W' : 'L'}</span> {event.platform}</td>{showSource && <td className="source-file-cell">{event.sourceFile}</td>}{!compact && <td className="event-id-cell">{event.eventId ?? '—'}</td>}</tr>) : <tr><td colSpan={columns} className="empty-row">No events match this search.</td></tr>}</tbody></table></div>
   </div>
 }
 

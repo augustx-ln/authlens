@@ -13,3 +13,4 @@ Feb 12 09:21:36 lab-server sshd[4112]: Failed password for alex from 198.51.100.
 Feb 12 09:22:02 lab-server sshd[4113]: Failed password for alex from 198.51.100.42 port 54333 ssh2
 Feb 12 09:22:31 lab-server sshd[4114]: Failed password for alex from 198.51.100.42 port 54334 ssh2
 Feb 12 09:24:16 lab-server sshd[4115]: Accepted publickey for alex from 198.51.100.42 port 54335 ssh2
+Feb 12 09:24:50 lab-server sshd[4116]: Failed password for casey from 203.0.113.77 port 54336 ssh2

@@ -21,6 +21,7 @@ name = "authlens-analyzer"
 version = "0.1.0"
 dependencies = [
  "evtx",
+ "js-sys",
  "roxmltree",
  "serde",
  "serde-wasm-bindgen",

@@ -1,0 +1,4 @@
+Feb 12 09:25:00 lab-server sshd[4117]: Accepted password for casey from 203.0.113.77 port 54337 ssh2
+Feb 12 09:25:10 lab-server sudo: alex : TTY=pts/0 ; PWD=/home/alex ; USER=root ; COMMAND=/usr/bin/id
+type=ADD_USER msg=audit(1770888360.000:1001): pid=4410 auid=1000 uid=0 acct="backupsvc" exe="/usr/sbin/useradd" hostname=? addr=? terminal=pts/0 res=success
+type=ADD_GROUP msg=audit(1770888420.000:1002): pid=4420 auid=1000 uid=0 acct="wheel" exe="/usr/sbin/groupadd" hostname=? addr=? terminal=pts/0 res=success
