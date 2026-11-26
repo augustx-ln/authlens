@@ -455,15 +455,36 @@ mod tests {
                 1_000,
                 "192.0.2.1",
                 "http",
-                &format!("/bad/{n}"),
+                &format!("GET /bad/{n}"),
                 8080,
                 Some(404),
             ));
         }
-        lab.record(event(1_000, "192.0.2.1", "http", "/bad/0", 8080, Some(404)));
-        lab.record(event(1_000, "192.0.2.2", "http", "/bad/5", 8080, Some(404)));
+        lab.record(event(
+            1_000,
+            "192.0.2.1",
+            "http",
+            "GET /bad/0",
+            8080,
+            Some(404),
+        ));
+        lab.record(event(
+            1_000,
+            "192.0.2.2",
+            "http",
+            "GET /bad/5",
+            8080,
+            Some(404),
+        ));
         assert!(lab.findings.is_empty());
-        lab.record(event(2_000, "192.0.2.1", "http", "/bad/5", 8080, Some(404)));
+        lab.record(event(
+            2_000,
+            "192.0.2.1",
+            "http",
+            "GET /bad/5",
+            8080,
+            Some(404),
+        ));
         assert_eq!(lab.findings[0].title, "Possible web path enumeration");
     }
 
