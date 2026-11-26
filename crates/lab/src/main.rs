@@ -109,6 +109,26 @@ impl LabState {
                 );
             }
         } else if event.kind == "http" {
+            let requests = self
+                .events
+                .iter()
+                .filter(|item| {
+                    item.source == event.source
+                        && item.kind == "http"
+                        && event.at_ms.saturating_sub(item.at_ms) <= 10_000
+                })
+                .count();
+            if requests >= 12 {
+                self.upsert(
+                    format!("http-burst:{}", event.source),
+                    "Rapid web probing",
+                    "Medium",
+                    &event,
+                    format!("{requests} HTTP requests in 10 seconds"),
+                    requests,
+                );
+            }
+
             let paths: HashSet<_> = self
                 .events
                 .iter()
@@ -118,7 +138,7 @@ impl LabState {
                         && item.status == Some(404)
                         && event.at_ms.saturating_sub(item.at_ms) <= 60_000
                 })
-                .map(|item| item.detail.as_str())
+                .filter_map(|item| item.detail.split_once(' ').map(|(_, path)| path))
                 .collect();
             if paths.len() >= 6 {
                 self.upsert(
@@ -202,6 +222,7 @@ async fn track_http(
     next: Next,
 ) -> Response {
     let path = request.uri().path().chars().take(180).collect::<String>();
+    let method = request.method().as_str().to_ascii_uppercase();
     let user_agent = request
         .headers()
         .get(header::USER_AGENT)
@@ -215,7 +236,7 @@ async fn track_http(
         at_ms: now_ms(),
         source: peer.ip().to_string(),
         kind: "http",
-        detail: path.clone(),
+        detail: format!("{method} {path}"),
         port: 8080,
         status: Some(response.status().as_u16()),
     };
@@ -236,10 +257,19 @@ async fn track_http(
     .find(|tool| agent.contains(**tool));
     let known_path = [
         "/.git/",
+        "/.env",
         "/wp-admin",
+        "/wp-login.php",
+        "/xmlrpc.php",
         "/server-status",
         "/phpinfo.php",
         "/actuator/",
+        "/swagger",
+        "/openapi.json",
+        "/graphql",
+        "/vendor/phpunit",
+        "/config.json",
+        "/backup.zip",
     ]
     .iter()
     .find(|probe| path_lower.starts_with(**probe));
@@ -250,6 +280,8 @@ async fn track_http(
             &event,
             &format!("Common fingerprint path requested: {probe}"),
         );
+    } else if matches!(method.as_str(), "OPTIONS" | "TRACE" | "CONNECT" | "DEBUG") {
+        lab.fingerprint(&event, &format!("Uncommon HTTP method requested: {method}"));
     }
     response
 }
