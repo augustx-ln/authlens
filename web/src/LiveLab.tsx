@@ -95,9 +95,12 @@ export default function LiveLab() {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [activityPulse, setActivityPulse] = useState(0)
   const [findingPulse, setFindingPulse] = useState(0)
+  const [recentBatch, setRecentBatch] = useState<{ first: number; last: number; count: number } | null>(null)
+  const [recentFindings, setRecentFindings] = useState<Record<string, 'New' | 'Updated'>>({})
+  const [motionEnabled, setMotionEnabled] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
-  const previous = useRef<{ total: number; findings: string } | null>(null)
+  const previous = useRef<{ total: number; findings: Map<string, string> } | null>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -108,17 +111,41 @@ export default function LiveLab() {
 
   useEffect(() => {
     let active = true
+    let batchTimer: number | undefined
+    let findingTimer: number | undefined
     const refresh = async () => {
       try {
         const response = await fetch('/api/live', { cache: 'no-store' })
         if (!response.ok) throw new Error('Monitor returned ' + response.status)
         const next = await response.json() as Snapshot
         if (!active) return
-        const signature = next.findings.map(finding => finding.id + ':' + finding.lastMs).join('|')
-        if (previous.current && next.totalEvents > previous.current.total) setActivityPulse(value => value + 1)
-        if (previous.current && signature !== previous.current.findings) setFindingPulse(value => value + 1)
-        if (previous.current && next.totalEvents < previous.current.total) setFrozen(null)
-        previous.current = { total: next.totalEvents, findings: signature }
+        const prior = previous.current
+        if (prior && next.totalEvents > prior.total) {
+          setActivityPulse(value => value + 1)
+          setRecentBatch({ first: prior.total + 1, last: next.totalEvents, count: next.totalEvents - prior.total })
+          window.clearTimeout(batchTimer)
+          batchTimer = window.setTimeout(() => setRecentBatch(null), 5000)
+        }
+        if (prior) {
+          const changed: Record<string, 'New' | 'Updated'> = {}
+          for (const finding of next.findings) {
+            const signature = finding.lastMs + ':' + finding.count
+            const before = prior.findings.get(finding.id)
+            if (before !== signature) changed[finding.id] = before === undefined ? 'New' : 'Updated'
+          }
+          if (Object.keys(changed).length) {
+            setFindingPulse(value => value + 1)
+            setRecentFindings(changed)
+            window.clearTimeout(findingTimer)
+            findingTimer = window.setTimeout(() => setRecentFindings({}), 5000)
+          }
+        }
+        if (prior && next.totalEvents < prior.total) {
+          setFrozen(null)
+          setRecentBatch(null)
+          setRecentFindings({})
+        }
+        previous.current = { total: next.totalEvents, findings: new Map(next.findings.map(finding => [finding.id, finding.lastMs + ':' + finding.count])) }
         setData(next)
         setConnected(true)
         setUpdatedAt(Date.now())
@@ -128,7 +155,7 @@ export default function LiveLab() {
     }
     void refresh()
     const timer = window.setInterval(() => void refresh(), 1500)
-    return () => { active = false; window.clearInterval(timer) }
+    return () => { active = false; window.clearInterval(timer); window.clearTimeout(batchTimer); window.clearTimeout(findingTimer) }
   }, [])
 
   useEffect(() => {
@@ -152,7 +179,7 @@ export default function LiveLab() {
   const httpErrors = visible?.events.filter(event => event.kind === 'http' && (event.status ?? 0) >= 400).length ?? 0
   const unseen = frozen && data ? Math.max(0, data.totalEvents - frozen.snapshot.totalEvents) : 0
   const normalizedQuery = query.trim().toLowerCase()
-  const shown = visible?.events.filter(event => {
+  const shown = visible?.events.map((event, index) => ({ event, sequence: visible.totalEvents - index })).filter(({ event }) => {
     if (kindFilter !== 'all' && event.kind !== kindFilter) return false
     if (resultFilter === 'ok' && (event.status === null || event.status >= 400)) return false
     if (resultFilter === 'error' && (event.status === null || event.status < 400)) return false
@@ -186,7 +213,7 @@ export default function LiveLab() {
     }
   }
 
-  return <div className="live-shell">
+  return <div className={'live-shell ' + (motionEnabled ? 'motion-on' : 'motion-off')}>
     <header className="live-topbar">
       <div className="live-brand"><span className="live-brand-mark">◇</span><strong>auth<span>lens</span></strong><span className="live-tag">DOCKER LAB</span></div>
       <a href="https://augustx-ln.github.io/authlens/" target="_blank" rel="noreferrer">File analysis <Icon name="external" size={14} /></a>
@@ -195,7 +222,7 @@ export default function LiveLab() {
       <div className="live-heading">
         <div><p className="live-kicker">LIVE MONITOR</p><h1>Lab activity at a glance</h1><p>Watch connections, web requests, and detection findings as they arrive.</p></div>
         <div className="live-heading-actions">
-          <span className={'live-status ' + (connected ? 'is-connected' : 'is-disconnected')} role="status"><i />{connected ? frozen ? 'View frozen' : 'Monitoring live' : data ? 'Reconnecting…' : 'Connecting…'}</span>
+          <span className={'live-status ' + (connected ? frozen ? 'is-frozen' : 'is-connected' : 'is-disconnected')} role="status"><i />{connected ? frozen ? 'View frozen' : 'Monitoring live' : data ? 'Reconnecting…' : 'Connecting…'}</span>
           <button className="live-download" type="button" onClick={downloadEvents} disabled={!data?.events.length || exporting}><Icon name="download" size={16} />{exporting ? 'Creating EVTX…' : 'Download .evtx'}</button>
         </div>
       </div>
@@ -212,29 +239,29 @@ export default function LiveLab() {
       <div className="live-overview-grid">
         <section className="live-panel live-activity-panel" aria-labelledby="activity-title">
           <div className="live-panel-heading"><div><span className="live-kicker">ACTIVITY</span><h2 id="activity-title">Traffic over the last <span className="live-desktop-only">15</span><span className="live-mobile-only">8</span> minutes</h2></div><span>Retained events only</span></div>
-          {visible && updatedAt ? <><div className="live-chart-desktop"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={15} /></div><div className="live-chart-mobile"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={8} /></div></> : <div className="live-chart-loading">Connecting to the lab monitor…</div>}
-          <div className="live-flow-heading"><strong>Live activity</strong><span>{frozen ? 'View frozen' : latestEvent ? 'Last observed ' + formatTime(latestEvent.atMs) : 'Waiting for traffic'}</span></div>
+          <div className="live-flow-heading"><strong>Live detection</strong><div className="live-flow-controls"><span className={'live-flow-state ' + (connected && !frozen ? 'is-listening' : '')}><i />{frozen ? 'View frozen' : !connected ? 'Reconnecting' : recentBatch ? '+' + recentBatch.count + (recentBatch.count === 1 ? ' new event' : ' new events') : 'Listening for traffic'}</span><button className="live-motion-toggle" type="button" aria-pressed={motionEnabled} onClick={() => setMotionEnabled(value => !value)}>{motionEnabled ? 'Motion on' : 'Motion off'}</button></div></div>
           <div className="live-flow">
             <div className="live-flow-node"><span>OBSERVED SOURCE</span><strong>{latestEvent?.source ?? '—'}</strong></div>
-            <div className="live-flow-route"><span className="live-flow-line" />{activityPulse > 0 && !frozen && connected && <span key={activityPulse} className="live-flow-pulse" />}</div>
+            <div className={'live-flow-route ' + (connected && !frozen ? 'is-listening' : '')}><span className="live-flow-line" />{activityPulse > 0 && !frozen && connected && <span key={activityPulse} className="live-flow-pulse" />}</div>
             <div className={'live-flow-node is-target ' + (findingPulse > 0 && !frozen && connected ? 'has-finding' : '')} key={findingPulse}><span>LAB TARGET</span><strong>{':' + (latestEvent?.port ?? '8080–8087')}</strong></div>
           </div>
-          <p className="live-flow-caption">{latestEvent ? (latestEvent.kind === 'http' ? 'HTTP request · ' : 'TCP connection · ') + latestEvent.detail : 'Send traffic to the lab target to see activity here.'}</p>
+          <p className="live-flow-caption">{latestEvent ? 'Last observed ' + formatTime(latestEvent.atMs) + ' · ' + (latestEvent.kind === 'http' ? 'HTTP ' : 'TCP ') + latestEvent.detail : 'Send traffic to the lab target to see activity here.'}</p>
+          {visible && updatedAt ? <><div className="live-chart-desktop"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={15} /></div><div className="live-chart-mobile"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={8} /></div></> : <div className="live-chart-loading">Connecting to the lab monitor…</div>}
         </section>
         <section className="live-panel live-findings-panel" aria-labelledby="findings-title">
           <div className="live-panel-heading"><div><span className="live-kicker">DETECTION RESULTS</span><h2 id="findings-title">Findings to investigate</h2></div><span>{visible?.findings.length ?? 0}</span></div>
-          {visible?.findings.length ? <div className="live-findings">{visible.findings.map(finding => <button className="live-finding" key={finding.id} type="button" onClick={() => setDetail({ type: 'finding', value: finding })}><span className={'live-severity ' + finding.severity.toLowerCase()}>{finding.severity}</span><strong>{finding.title}</strong><small>{finding.source + ' · ' + finding.count + (finding.count === 1 ? ' occurrence' : ' occurrences')}</small><span className="live-finding-time">Latest {formatTime(finding.lastMs)}</span></button>)}</div> : <div className="live-empty">No findings yet. Detection results will appear here when lab traffic matches a rule.</div>}
+          {visible?.findings.length ? <div className="live-findings">{visible.findings.map(finding => <button className={'live-finding ' + (!frozen && recentFindings[finding.id] ? 'is-recent' : '')} key={finding.id + ':' + finding.lastMs + ':' + finding.count} type="button" onClick={() => setDetail({ type: 'finding', value: finding })}><span className="live-finding-top"><span className={'live-severity ' + finding.severity.toLowerCase()}>{finding.severity}</span>{!frozen && recentFindings[finding.id] && <span className="live-finding-new">{recentFindings[finding.id]}</span>}</span><strong>{finding.title}</strong><small>{finding.source + ' · ' + finding.count + (finding.count === 1 ? ' occurrence' : ' occurrences')}</small><span className="live-finding-time">Latest {formatTime(finding.lastMs)}</span></button>)}</div> : <div className="live-empty">No findings yet. Detection results will appear here when lab traffic matches a rule.</div>}
         </section>
       </div>
       <section className="live-panel live-stream-panel" aria-labelledby="stream-title">
-        <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2 id="stream-title">Latest activity</h2></div><span>{shown.length.toLocaleString() + ' shown · ' + (visible?.events.length.toLocaleString() ?? 0) + ' retained'}</span></div>
+        <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2 id="stream-title">Latest activity</h2></div><div className="live-stream-meta"><span>{shown.length.toLocaleString() + ' shown · ' + (visible?.events.length.toLocaleString() ?? 0) + ' retained'}</span>{!frozen && recentBatch && <strong role="status">{'+' + recentBatch.count + ' new'}</strong>}</div></div>
         <div className="live-stream-toolbar">
           <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search source, request, or port" aria-label="Search events" /></label>
           <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option></select>
           <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option></select>
           <button className={'live-freeze ' + (frozen ? 'is-frozen' : '')} type="button" onClick={() => setFrozen(frozen ? null : data ? { snapshot: data, atMs: Date.now() } : null)} disabled={!data}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume live' + (unseen ? ' · ' + unseen + ' new' : '') : 'Freeze view'}</button>
         </div>
-        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Type</th><th>Request / connection</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map((event, index) => <tr key={event.atMs + '-' + event.source + '-' + index} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + (event.kind === 'http' ? 'HTTP' : 'TCP') + ' event from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><span className={'live-type ' + (event.kind === 'http' ? 'is-http' : 'is-tcp')}>{event.kind === 'http' ? 'HTTP' : 'TCP'}</span></td><td>{event.detail}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{event.status ?? 'Accepted'}</span></td></tr>) : <tr><td colSpan={5} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
+        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Type</th><th>Request / connection</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + (event.kind === 'http' ? 'HTTP' : 'TCP') + ' event from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><span className={'live-type ' + (event.kind === 'http' ? 'is-http' : 'is-tcp')}>{event.kind === 'http' ? 'HTTP' : 'TCP'}</span></td><td>{event.detail}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{event.status ?? 'Accepted'}</span></td></tr>) : <tr><td colSpan={5} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
         {exportStatus && <p className="live-export-status" role="status">{exportStatus}</p>}
       </section>
       <p className="live-footnote">Observed source addresses may be Docker gateway addresses. Events and findings stay in container memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log. Findings indicate patterns to investigate, not proof of a specific tool.</p>
