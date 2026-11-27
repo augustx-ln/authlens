@@ -32,6 +32,7 @@ struct LiveEvent {
     outcome: Option<String>,
     reason: Option<String>,
     user_agent: Option<String>,
+    source_sensor: Option<String>,
 }
 
 #[derive(Clone, Serialize)]

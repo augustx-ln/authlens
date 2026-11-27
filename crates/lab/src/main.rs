@@ -42,6 +42,8 @@ struct Event {
     reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_sensor: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -55,6 +57,7 @@ struct Finding {
     first_ms: u64,
     last_ms: u64,
     count: usize,
+    event_ids: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -87,6 +90,56 @@ struct IngestEvent {
     reason: Option<String>,
     #[serde(rename = "userAgent")]
     user_agent: Option<String>,
+    #[serde(rename = "sourceSensor")]
+    source_sensor: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HostConnection {
+    source: String,
+    port: u16,
+}
+
+fn require_token(headers: &HeaderMap) -> Result<(), StatusCode> {
+    let token = std::env::var("LAB_INGEST_TOKEN").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if token.len() < 32
+        || headers.get("x-lab-token").and_then(|v| v.to_str().ok()) != Some(token.as_str())
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(())
+}
+
+async fn ingest_connection(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<HostConnection>,
+) -> StatusCode {
+    if let Err(status) = require_token(&headers) {
+        return status;
+    }
+    if input.source.parse::<IpAddr>().is_err() || !PORTS.contains(&input.port) {
+        return StatusCode::BAD_REQUEST;
+    }
+    state
+        .lock()
+        .expect("lab state mutex poisoned")
+        .record(Event {
+            at_ms: now_ms(),
+            source: input.source,
+            kind: "connection",
+            detail: format!("TCP connection to lab port {}", input.port),
+            port: input.port,
+            status: None,
+            action: None,
+            actor: None,
+            target: None,
+            outcome: None,
+            reason: None,
+            user_agent: None,
+            source_sensor: Some("Windows VMnet8 listener".to_owned()),
+        });
+    StatusCode::NO_CONTENT
 }
 
 fn valid_field(value: &Option<String>, max: usize) -> bool {
@@ -100,13 +153,8 @@ async fn ingest(
     headers: HeaderMap,
     Json(input): Json<IngestEvent>,
 ) -> StatusCode {
-    let Ok(token) = std::env::var("LAB_INGEST_TOKEN") else {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    };
-    if token.len() < 32
-        || headers.get("x-lab-token").and_then(|v| v.to_str().ok()) != Some(token.as_str())
-    {
-        return StatusCode::UNAUTHORIZED;
+    if let Err(status) = require_token(&headers) {
+        return status;
     }
     if input.source.parse::<IpAddr>().is_err()
         || input.method.len() > 12
@@ -122,6 +170,7 @@ async fn ingest(
         || !valid_field(&input.outcome, 40)
         || !valid_field(&input.reason, 180)
         || !valid_field(&input.user_agent, 180)
+        || !valid_field(&input.source_sensor, 40)
     {
         return StatusCode::BAD_REQUEST;
     }
@@ -138,6 +187,7 @@ async fn ingest(
         outcome: input.outcome,
         reason: input.reason,
         user_agent: input.user_agent,
+        source_sensor: input.source_sensor,
     };
     let mut lab = state.lock().expect("lab state mutex poisoned");
     lab.record(event.clone());
@@ -213,6 +263,7 @@ impl LabState {
     fn record(&mut self, event: Event) {
         // shortcut: Docker Desktop probes published TCP ports at startup; ignore the first ten seconds.
         if event.kind == "connection"
+            && event.source_sensor.is_none()
             && self.started_ms != 0
             && event.at_ms.saturating_sub(self.started_ms) < 10_000
         {
@@ -344,11 +395,13 @@ impl LabState {
         evidence: String,
         count: usize,
     ) {
+        let event_ids = self.related_event_ids(&id, event);
         if let Some(index) = self.findings.iter().position(|item| item.id == id) {
             let mut finding = self.findings.remove(index).expect("finding exists");
             finding.last_ms = event.at_ms;
             finding.evidence = evidence;
             finding.count = count;
+            finding.event_ids = event_ids;
             self.findings.push_front(finding);
         } else {
             self.findings.push_front(Finding {
@@ -360,9 +413,50 @@ impl LabState {
                 first_ms: event.at_ms,
                 last_ms: event.at_ms,
                 count,
+                event_ids,
             });
             self.findings.truncate(MAX_FINDINGS);
         }
+    }
+
+    fn related_event_ids(&self, id: &str, event: &Event) -> Vec<u64> {
+        let window = if id.starts_with("bank-") {
+            600_000
+        } else if id.starts_with("paths:") {
+            60_000
+        } else if id.starts_with("ports:") {
+            30_000
+        } else {
+            10_000
+        };
+        self.events
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                if item.source != event.source || event.at_ms.saturating_sub(item.at_ms) > window {
+                    return false;
+                }
+                if id.starts_with("ports:") {
+                    item.kind == "connection"
+                } else if id.starts_with("paths:") {
+                    item.kind == "http" && item.status == Some(404)
+                } else if id.starts_with("bank-login:") {
+                    item.detail == "POST /login" && item.status == Some(401)
+                } else if id.starts_with("bank-followup:") {
+                    item.detail == "POST /login" && matches!(item.status, Some(401 | 302))
+                } else if id.starts_with("bank-access:") {
+                    item.action.as_deref() == Some("cross_account_read")
+                        && item.actor == event.actor
+                        && item.target == event.target
+                } else if id.starts_with("fingerprint:") {
+                    item.at_ms == event.at_ms && item.detail == event.detail
+                } else {
+                    item.kind == "http"
+                }
+            })
+            .take(100)
+            .map(|(index, _)| self.total_events - index as u64)
+            .collect()
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -418,6 +512,7 @@ async fn track_http(
         outcome: None,
         reason: None,
         user_agent: Some(user_agent.clone()),
+        source_sensor: None,
     };
     let mut lab = state.lock().expect("lab state mutex poisoned");
     lab.record(event.clone());
@@ -507,6 +602,7 @@ async fn listen_probe(listener: TcpListener, port: u16, state: Shared) -> std::i
                 outcome: None,
                 reason: None,
                 user_agent: None,
+                source_sensor: None,
             });
         drop(stream);
     }
@@ -557,6 +653,7 @@ async fn main() -> std::io::Result<()> {
     let monitor = Router::new()
         .route("/api/live", get(snapshot))
         .route("/api/lab-event", post(ingest))
+        .route("/api/lab-connection", post(ingest_connection))
         .route_service("/monitor", ServeFile::new(format!("{dist}/index.html")))
         .route_service(
             "/favicon.svg",
@@ -594,6 +691,7 @@ mod tests {
             outcome: None,
             reason: None,
             user_agent: None,
+            source_sensor: None,
         }
     }
 
@@ -608,6 +706,7 @@ mod tests {
         assert!(lab.findings.is_empty());
         lab.record(event(2_000, "192.0.2.1", "connection", "", 8084, None));
         assert_eq!(lab.findings[0].count, 4);
+        assert_eq!(lab.findings[0].event_ids, vec![6, 5, 3, 2, 1]);
         lab.record(event(40_000, "192.0.2.3", "connection", "", 8085, None));
         assert_eq!(lab.findings.len(), 1);
     }
@@ -668,5 +767,20 @@ mod tests {
             lab.record(event(11_001, "192.0.2.1", "connection", "", port, None));
         }
         assert_eq!(lab.findings[0].title, "Possible TCP connect scan");
+    }
+
+    #[test]
+    fn host_observed_connections_are_recorded_immediately() {
+        let mut lab = LabState {
+            started_ms: 1_000,
+            ..LabState::default()
+        };
+        for port in 8081..=8084 {
+            let mut connection = event(2_000, "192.0.2.10", "connection", "", port, None);
+            connection.source_sensor = Some("Windows VMnet8 listener".to_owned());
+            lab.record(connection);
+        }
+        assert_eq!(lab.events.len(), 4);
+        assert_eq!(lab.findings[0].source, "192.0.2.10");
     }
 }

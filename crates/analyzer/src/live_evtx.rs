@@ -218,6 +218,7 @@ impl BinXml {
             ("Outcome", &event.outcome),
             ("Reason", &event.reason),
             ("UserAgent", &event.user_agent),
+            ("SourceSensor", &event.source_sensor),
         ] {
             if let Some(value) = value {
                 fields.push((name, value.clone()));

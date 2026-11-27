@@ -15,6 +15,7 @@ type LiveEvent = {
   outcome?: string
   reason?: string
   userAgent?: string
+  sourceSensor?: string
 }
 
 type Finding = {
@@ -26,6 +27,7 @@ type Finding = {
   firstMs: number
   lastMs: number
   count: number
+  eventIds: number[]
 }
 
 type Snapshot = {
@@ -51,6 +53,21 @@ const actionLabels: Record<string, string> = {
 }
 const activityLabel = (event: LiveEvent) => event.action ? actionLabels[event.action] ?? event.action : event.detail
 const resultLabel = (event: LiveEvent) => event.outcome ? event.outcome + (event.status ? ' · ' + event.status : '') : event.status ?? 'Accepted'
+const searchFields: Record<string, (event: LiveEvent) => string> = {
+  source: event => event.source, actor: event => event.actor ?? '', action: event => event.action ?? '',
+  target: event => event.target ?? '', status: event => String(event.status ?? ''),
+  outcome: event => event.outcome ?? '', reason: event => event.reason ?? '',
+  sensor: event => event.sourceSensor ?? '',
+}
+function matchesQuery(event: LiveEvent, query: string) {
+  return query.split(/\s+/).every(term => {
+    const colon = term.indexOf(':')
+    if (colon > 0 && searchFields[term.slice(0, colon)]) {
+      return searchFields[term.slice(0, colon)](event).toLowerCase().includes(term.slice(colon + 1))
+    }
+    return [event.source, event.detail, event.port, event.status, event.action, event.actor, event.target, event.outcome, event.reason, event.userAgent, event.sourceSensor].join(' ').toLowerCase().includes(term)
+  })
+}
 
 function Icon({ name, size = 18 }: { name: 'download' | 'external' | 'search' | 'pause' | 'play' | 'close'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const }
@@ -109,6 +126,7 @@ export default function LiveLab() {
   const [query, setQuery] = useState('')
   const [kindFilter, setKindFilter] = useState('all')
   const [resultFilter, setResultFilter] = useState('all')
+  const [focusedFindingId, setFocusedFindingId] = useState<string | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [activityPulse, setActivityPulse] = useState(0)
   const [findingPulse, setFindingPulse] = useState(0)
@@ -119,6 +137,7 @@ export default function LiveLab() {
   const [exportStatus, setExportStatus] = useState('')
   const previous = useRef<{ total: number; findings: Map<string, string> } | null>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
+  const streamPanel = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const previousTitle = document.title
@@ -196,12 +215,15 @@ export default function LiveLab() {
   const httpErrors = visible?.events.filter(event => event.kind === 'http' && (event.status ?? 0) >= 400).length ?? 0
   const unseen = frozen && data ? Math.max(0, data.totalEvents - frozen.snapshot.totalEvents) : 0
   const normalizedQuery = query.trim().toLowerCase()
-  const shown = visible?.events.map((event, index) => ({ event, sequence: visible.totalEvents - index })).filter(({ event }) => {
+  const focusedFinding = visible?.findings.find(finding => finding.id === focusedFindingId)
+  const focusedEventIds = focusedFinding ? new Set(focusedFinding.eventIds) : null
+  const shown = visible?.events.map((event, index) => ({ event, sequence: visible.totalEvents - index })).filter(({ event, sequence }) => {
+    if (focusedEventIds && !focusedEventIds.has(sequence)) return false
     if (kindFilter !== 'all' && event.kind !== kindFilter) return false
     if (resultFilter === 'ok' && (event.status === null || event.status >= 400)) return false
     if (resultFilter === 'error' && (event.status === null || event.status < 400)) return false
     if (resultFilter === 'accepted' && event.status !== null) return false
-    return !normalizedQuery || [event.source, event.detail, event.port, event.status, event.action, event.actor, event.target, event.outcome, event.reason, event.userAgent].join(' ').toLowerCase().includes(normalizedQuery)
+    return !normalizedQuery || matchesQuery(event, normalizedQuery)
   }) ?? []
 
   async function downloadEvents() {
@@ -270,24 +292,26 @@ export default function LiveLab() {
           {visible?.findings.length ? <div className="live-findings">{visible.findings.map(finding => <button className={'live-finding ' + (!frozen && recentFindings[finding.id] ? 'is-recent' : '')} key={finding.id + ':' + finding.lastMs + ':' + finding.count} type="button" onClick={() => setDetail({ type: 'finding', value: finding })}><span className="live-finding-top"><span className={'live-severity ' + finding.severity.toLowerCase()}>{finding.severity}</span>{!frozen && recentFindings[finding.id] && <span className="live-finding-new">{recentFindings[finding.id]}</span>}</span><strong>{finding.title}</strong><small>{finding.source + ' · ' + finding.count + (finding.count === 1 ? ' occurrence' : ' occurrences')}</small><span className="live-finding-time">Latest {formatTime(finding.lastMs)}</span></button>)}</div> : <div className="live-empty">No findings yet. Detection results will appear here when lab traffic matches a rule.</div>}
         </section>
       </div>
-      <section className="live-panel live-stream-panel" aria-labelledby="stream-title">
+      <section ref={streamPanel} className="live-panel live-stream-panel" aria-labelledby="stream-title">
         <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2 id="stream-title">Latest activity</h2></div><div className="live-stream-meta"><span>{shown.length.toLocaleString() + ' shown · ' + (visible?.events.length.toLocaleString() ?? 0) + ' retained'}</span>{!frozen && recentBatch && <strong role="status">{'+' + recentBatch.count + ' new'}</strong>}</div></div>
         <div className="live-stream-toolbar">
-          <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search account, action, target, source" aria-label="Search events" /></label>
+          <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search or filter source:, actor:, action:, status:" aria-label="Search events" /></label>
           <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option></select>
           <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option></select>
           <button className={'live-freeze ' + (frozen ? 'is-frozen' : '')} type="button" onClick={() => setFrozen(frozen ? null : data ? { snapshot: data, atMs: Date.now() } : null)} disabled={!data}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume live' + (unseen ? ' · ' + unseen + ' new' : '') : 'Freeze view'}</button>
         </div>
+        {focusedFinding && <div className="live-evidence-filter" role="status"><span>Related events for <strong>{focusedFinding.title}</strong> · {shown.length} retained</span><button type="button" onClick={() => setFocusedFindingId(null)}>Show all events</button></div>}
         <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Activity</th><th>Account / actor</th><th>Target</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + activityLabel(event) + ' from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><strong className="live-activity-name">{activityLabel(event)}</strong>{event.action && <small className="live-activity-request">{event.detail}</small>}</td><td>{event.actor || '—'}</td><td>{event.target || '—'}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{resultLabel(event)}</span></td></tr>) : <tr><td colSpan={6} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
         {exportStatus && <p className="live-export-status" role="status">{exportStatus}</p>}
       </section>
-      <p className="live-footnote">Observed source addresses may be Docker gateway addresses. Events and findings stay in container memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log. Findings indicate patterns to investigate, not proof of a specific tool.</p>
+      <p className="live-footnote">The local VMnet8 listener captures peer IPs before Docker forwarding. Container-only events may still show a gateway. Events and findings stay in monitor memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log.</p>
     </main>
     {detail && <div className="live-detail-backdrop" onClick={() => setDetail(null)}>
       <aside className="live-detail" role="dialog" aria-modal="true" aria-label={detail.type === 'event' ? 'Event details' : 'Finding details'} onClick={event => event.stopPropagation()}>
         <div className="live-detail-heading"><div><span className="live-kicker">{detail.type === 'event' ? 'EVENT DETAILS' : 'FINDING DETAILS'}</span><h2>{detail.type === 'event' ? activityLabel(detail.value) : detail.value.title}</h2></div><button ref={closeButton} type="button" onClick={() => setDetail(null)} aria-label="Close details"><Icon name="close" /></button></div>
-        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Account / actor</dt><dd>{detail.value.actor || 'Unknown'}</dd><dt>Event code</dt><dd>{detail.value.action || '—'}</dd><dt>Target</dt><dd>{detail.value.target || '—'}</dd><dt>Outcome</dt><dd>{detail.value.outcome || '—'}</dd><dt>Reason</dt><dd>{detail.value.reason || '—'}</dd><dt>HTTP / TCP</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : 'TCP connection'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.port}</dd><dt>HTTP status</dt><dd>{detail.value.status ?? '—'}</dd><dt>User-Agent</dt><dd>{detail.value.userAgent || '—'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
-        <p className="live-detail-note">The container may observe a Docker gateway address rather than Kali’s original IP.</p>
+        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Captured by</dt><dd>{detail.value.sourceSensor || 'Docker container'}</dd><dt>Account / actor</dt><dd>{detail.value.actor || 'Unknown'}</dd><dt>Event code</dt><dd>{detail.value.action || '—'}</dd><dt>Target</dt><dd>{detail.value.target || '—'}</dd><dt>Outcome</dt><dd>{detail.value.outcome || '—'}</dd><dt>Reason</dt><dd>{detail.value.reason || '—'}</dd><dt>HTTP / TCP</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : 'TCP connection'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.port}</dd><dt>HTTP status</dt><dd>{detail.value.status ?? '—'}</dd><dt>User-Agent</dt><dd>{detail.value.userAgent || '—'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
+        {detail.type === 'finding' && <button className="live-evidence-action" type="button" onClick={() => { setFocusedFindingId(detail.value.id); setQuery(''); setKindFilter('all'); setResultFilter('all'); setDetail(null); window.setTimeout(() => streamPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }}>View related events ({detail.value.eventIds.length})</button>}
+        <p className="live-detail-note">{detail.type === 'event' && detail.value.sourceSensor ? 'The observed source was captured by the local listener.' : 'Container-only observations may show a Docker gateway address.'}</p>
       </aside>
     </div>}
   </div>
