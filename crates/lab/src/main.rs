@@ -403,7 +403,10 @@ async fn main() -> std::io::Result<()> {
     let monitor = Router::new()
         .route("/api/live", get(snapshot))
         .route_service("/monitor", ServeFile::new(format!("{dist}/index.html")))
-        .route_service("/favicon.svg", ServeFile::new(format!("{dist}/favicon.svg")))
+        .route_service(
+            "/favicon.svg",
+            ServeFile::new(format!("{dist}/favicon.svg")),
+        )
         .nest_service("/assets", ServeDir::new(format!("{dist}/assets")))
         .with_state(state);
     let monitor_listener = TcpListener::bind("0.0.0.0:3000").await?;
