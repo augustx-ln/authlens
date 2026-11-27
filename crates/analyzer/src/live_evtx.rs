@@ -200,13 +200,28 @@ impl BinXml {
             ("Detail", ""),
             ("ResponseStatus", ""),
         ];
-        let mut fields = values.map(|(name, value)| (name, value.to_owned()));
+        let mut fields: Vec<_> = values
+            .into_iter()
+            .map(|(name, value)| (name, value.to_owned()))
+            .collect();
         fields[2].1 = event.port.to_string();
         fields[4].1 = event.detail.clone();
         if is_http {
             fields[5].1 = event
                 .status
                 .map_or_else(String::new, |status| status.to_string());
+        }
+        for (name, value) in [
+            ("Action", &event.action),
+            ("Actor", &event.actor),
+            ("Target", &event.target),
+            ("Outcome", &event.outcome),
+            ("Reason", &event.reason),
+            ("UserAgent", &event.user_agent),
+        ] {
+            if let Some(value) = value {
+                fields.push((name, value.clone()));
+            }
         }
         self.element("EventData", &[], |xml| {
             for (name, value) in &fields {

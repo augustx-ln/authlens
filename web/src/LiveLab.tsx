@@ -9,6 +9,12 @@ type LiveEvent = {
   detail: string
   port: number
   status: number | null
+  action?: string
+  actor?: string
+  target?: string
+  outcome?: string
+  reason?: string
+  userAgent?: string
 }
 
 type Finding = {
@@ -34,6 +40,17 @@ type Detail = { type: 'event'; value: LiveEvent } | { type: 'finding'; value: Fi
 const timeFormat = new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 const shortTimeFormat = new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' })
 const formatTime = (value: number) => timeFormat.format(value)
+const actionLabels: Record<string, string> = {
+  login_page_view: 'Sign-in page viewed', login_failed: 'Failed sign-in', login_success: 'Successful sign-in',
+  authentication_required: 'Sign-in required', account_overview_redirect: 'Account overview opened',
+  account_lookup_failed: 'Account lookup failed', statement_view: 'Statement viewed',
+  cross_account_read: 'Cross-account statement read', admin_dashboard_view: 'Admin workspace viewed',
+  authorization_denied: 'Access denied', page_not_found: 'Unknown page requested',
+  admin_export: 'Customer accounts exported', logout: 'Signed out',
+  unsupported_method: 'Unsupported method rejected', invalid_request: 'Invalid request rejected',
+}
+const activityLabel = (event: LiveEvent) => event.action ? actionLabels[event.action] ?? event.action : event.detail
+const resultLabel = (event: LiveEvent) => event.outcome ? event.outcome + (event.status ? ' · ' + event.status : '') : event.status ?? 'Accepted'
 
 function Icon({ name, size = 18 }: { name: 'download' | 'external' | 'search' | 'pause' | 'play' | 'close'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const }
@@ -184,7 +201,7 @@ export default function LiveLab() {
     if (resultFilter === 'ok' && (event.status === null || event.status >= 400)) return false
     if (resultFilter === 'error' && (event.status === null || event.status < 400)) return false
     if (resultFilter === 'accepted' && event.status !== null) return false
-    return !normalizedQuery || (event.source + ' ' + event.detail + ' ' + event.port + ' ' + (event.status ?? '')).toLowerCase().includes(normalizedQuery)
+    return !normalizedQuery || [event.source, event.detail, event.port, event.status, event.action, event.actor, event.target, event.outcome, event.reason, event.userAgent].join(' ').toLowerCase().includes(normalizedQuery)
   }) ?? []
 
   async function downloadEvents() {
@@ -256,20 +273,20 @@ export default function LiveLab() {
       <section className="live-panel live-stream-panel" aria-labelledby="stream-title">
         <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2 id="stream-title">Latest activity</h2></div><div className="live-stream-meta"><span>{shown.length.toLocaleString() + ' shown · ' + (visible?.events.length.toLocaleString() ?? 0) + ' retained'}</span>{!frozen && recentBatch && <strong role="status">{'+' + recentBatch.count + ' new'}</strong>}</div></div>
         <div className="live-stream-toolbar">
-          <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search source, request, or port" aria-label="Search events" /></label>
+          <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search account, action, target, source" aria-label="Search events" /></label>
           <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option></select>
           <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option></select>
           <button className={'live-freeze ' + (frozen ? 'is-frozen' : '')} type="button" onClick={() => setFrozen(frozen ? null : data ? { snapshot: data, atMs: Date.now() } : null)} disabled={!data}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume live' + (unseen ? ' · ' + unseen + ' new' : '') : 'Freeze view'}</button>
         </div>
-        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Type</th><th>Request / connection</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + (event.kind === 'http' ? 'HTTP' : 'TCP') + ' event from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><span className={'live-type ' + (event.kind === 'http' ? 'is-http' : 'is-tcp')}>{event.kind === 'http' ? 'HTTP' : 'TCP'}</span></td><td>{event.detail}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{event.status ?? 'Accepted'}</span></td></tr>) : <tr><td colSpan={5} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
+        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Activity</th><th>Account / actor</th><th>Target</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + activityLabel(event) + ' from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><strong className="live-activity-name">{activityLabel(event)}</strong>{event.action && <small className="live-activity-request">{event.detail}</small>}</td><td>{event.actor || '—'}</td><td>{event.target || '—'}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{resultLabel(event)}</span></td></tr>) : <tr><td colSpan={6} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
         {exportStatus && <p className="live-export-status" role="status">{exportStatus}</p>}
       </section>
       <p className="live-footnote">Observed source addresses may be Docker gateway addresses. Events and findings stay in container memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log. Findings indicate patterns to investigate, not proof of a specific tool.</p>
     </main>
     {detail && <div className="live-detail-backdrop" onClick={() => setDetail(null)}>
       <aside className="live-detail" role="dialog" aria-modal="true" aria-label={detail.type === 'event' ? 'Event details' : 'Finding details'} onClick={event => event.stopPropagation()}>
-        <div className="live-detail-heading"><div><span className="live-kicker">{detail.type === 'event' ? 'EVENT DETAILS' : 'FINDING DETAILS'}</span><h2>{detail.type === 'event' ? detail.value.kind === 'http' ? 'HTTP request' : 'TCP connection' : detail.value.title}</h2></div><button ref={closeButton} type="button" onClick={() => setDetail(null)} aria-label="Close details"><Icon name="close" /></button></div>
-        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Type</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : 'TCP connection'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.port}</dd><dt>Result</dt><dd>{detail.value.status ?? 'Accepted'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
+        <div className="live-detail-heading"><div><span className="live-kicker">{detail.type === 'event' ? 'EVENT DETAILS' : 'FINDING DETAILS'}</span><h2>{detail.type === 'event' ? activityLabel(detail.value) : detail.value.title}</h2></div><button ref={closeButton} type="button" onClick={() => setDetail(null)} aria-label="Close details"><Icon name="close" /></button></div>
+        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Account / actor</dt><dd>{detail.value.actor || 'Unknown'}</dd><dt>Event code</dt><dd>{detail.value.action || '—'}</dd><dt>Target</dt><dd>{detail.value.target || '—'}</dd><dt>Outcome</dt><dd>{detail.value.outcome || '—'}</dd><dt>Reason</dt><dd>{detail.value.reason || '—'}</dd><dt>HTTP / TCP</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : 'TCP connection'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.port}</dd><dt>HTTP status</dt><dd>{detail.value.status ?? '—'}</dd><dt>User-Agent</dt><dd>{detail.value.userAgent || '—'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
         <p className="live-detail-note">The container may observe a Docker gateway address rather than Kali’s original IP.</p>
       </aside>
     </div>}

@@ -26,6 +26,12 @@ struct LiveEvent {
     detail: String,
     port: u16,
     status: Option<u16>,
+    action: Option<String>,
+    actor: Option<String>,
+    target: Option<String>,
+    outcome: Option<String>,
+    reason: Option<String>,
+    user_agent: Option<String>,
 }
 
 #[derive(Clone, Serialize)]

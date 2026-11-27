@@ -47,6 +47,8 @@ This lab puts the target web page and seven TCP probe ports in a Docker containe
 
 The dashboard shows a recent HTTP/TCP activity graph, a listening animation, detection findings, and a searchable event stream. New traffic briefly animates the source-to-target path and incoming rows; changed findings are highlighted. Motion follows the system reduced-motion setting by default and can be changed with **Motion on/off** in the live detection panel. Select a finding or event to inspect its details. **Freeze view** holds the displayed snapshot while collection continues; **Resume live** shows the latest data and the number of new events. The graph uses retained events, so high-volume traffic can replace older events before the 15-minute window ends (8 minutes on narrow screens).
 
+An instrumented local target can send authenticated audit events with an action, actor, target, outcome, reason, and User-Agent. The event stream and detail drawer show these fields, and they are included in the EVTX export. The monitor does not collect passwords or session cookies. Docker Desktop may still report its gateway address as the observed source.
+
 **Download .evtx** exports the latest 500 retained lab events as a valid `.evtx` file. These are synthetic `AuthLens-LiveLab` records in the Windows Application channel, not Security events collected from the host. AuthLens can read the exported file through its normal upload flow.
 
 1. Start Docker Desktop in Linux-container mode. In PowerShell, find the Windows address on the network shared with Kali:

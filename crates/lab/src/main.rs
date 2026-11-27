@@ -30,6 +30,18 @@ struct Event {
     detail: String,
     port: u16,
     status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -69,6 +81,18 @@ struct IngestEvent {
     path: String,
     status: u16,
     action: Option<String>,
+    actor: Option<String>,
+    target: Option<String>,
+    outcome: Option<String>,
+    reason: Option<String>,
+    #[serde(rename = "userAgent")]
+    user_agent: Option<String>,
+}
+
+fn valid_field(value: &Option<String>, max: usize) -> bool {
+    value
+        .as_ref()
+        .is_none_or(|text| text.len() <= max && !text.chars().any(char::is_control))
 }
 
 async fn ingest(
@@ -92,6 +116,12 @@ async fn ingest(
         || input.status > 599
         || !input.method.bytes().all(|c| c.is_ascii_uppercase())
         || input.path.chars().any(char::is_control)
+        || !valid_field(&input.action, 40)
+        || !valid_field(&input.actor, 64)
+        || !valid_field(&input.target, 160)
+        || !valid_field(&input.outcome, 40)
+        || !valid_field(&input.reason, 180)
+        || !valid_field(&input.user_agent, 180)
     {
         return StatusCode::BAD_REQUEST;
     }
@@ -102,6 +132,12 @@ async fn ingest(
         detail: format!("{} {}", input.method, input.path),
         port: 8080,
         status: Some(input.status),
+        action: input.action.clone(),
+        actor: input.actor.clone(),
+        target: input.target.clone(),
+        outcome: input.outcome,
+        reason: input.reason,
+        user_agent: input.user_agent,
     };
     let mut lab = state.lock().expect("lab state mutex poisoned");
     lab.record(event.clone());
@@ -126,7 +162,7 @@ async fn ingest(
                     "Repeated bank sign-in failures",
                     "Medium",
                     &event,
-                    format!("{failures} failed sign-ins from this observed source in 10 minutes"),
+                    format!("{failures} failed sign-ins from this observed source in 10 minutes; latest attempted account: {}", event.actor.as_deref().filter(|s| !s.is_empty()).unwrap_or("unknown")),
                     failures,
                 );
             } else {
@@ -136,7 +172,8 @@ async fn ingest(
                     "High",
                     &event,
                     format!(
-                        "A sign-in succeeded after {failures} failures from this observed source"
+                        "Account {} signed in after {failures} failures from this observed source",
+                        event.actor.as_deref().unwrap_or("unknown")
                     ),
                     failures + 1,
                 );
@@ -145,11 +182,20 @@ async fn ingest(
     }
     if input.action.as_deref() == Some("cross_account_read") {
         lab.upsert(
-            format!("bank-access:{}", event.source),
+            format!(
+                "bank-access:{}:{}:{}",
+                event.source,
+                event.actor.as_deref().unwrap_or("unknown"),
+                event.target.as_deref().unwrap_or("unknown")
+            ),
             "Cross-account statement access",
             "High",
             &event,
-            "A customer session read another synthetic customer's statement".to_owned(),
+            format!(
+                "{} read {} despite different account ownership",
+                event.actor.as_deref().unwrap_or("unknown"),
+                event.target.as_deref().unwrap_or("an account")
+            ),
             1,
         );
     }
@@ -366,6 +412,12 @@ async fn track_http(
         detail: format!("{method} {path}"),
         port: 8080,
         status: Some(response.status().as_u16()),
+        action: None,
+        actor: None,
+        target: None,
+        outcome: None,
+        reason: None,
+        user_agent: Some(user_agent.clone()),
     };
     let mut lab = state.lock().expect("lab state mutex poisoned");
     lab.record(event.clone());
@@ -449,6 +501,12 @@ async fn listen_probe(listener: TcpListener, port: u16, state: Shared) -> std::i
                 detail: format!("TCP connection to lab port {port}"),
                 port,
                 status: None,
+                action: None,
+                actor: None,
+                target: None,
+                outcome: None,
+                reason: None,
+                user_agent: None,
             });
         drop(stream);
     }
@@ -530,6 +588,12 @@ mod tests {
             detail: detail.into(),
             port,
             status,
+            action: None,
+            actor: None,
+            target: None,
+            outcome: None,
+            reason: None,
+            user_agent: None,
         }
     }
 
