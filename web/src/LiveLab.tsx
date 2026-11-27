@@ -14,7 +14,7 @@ type LiveEvent = {
 type Finding = {
   id: string
   title: string
-  severity: 'Medium' | 'Info'
+  severity: 'High' | 'Medium' | 'Info'
   source: string
   evidence: string
   firstMs: number
@@ -227,7 +227,7 @@ export default function LiveLab() {
         </div>
       </div>
       <div className="live-target">
-        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP 8080 · TCP probe ports 8081–8087</small></div>
+        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP target on 8080 · TCP probe ports 8081–8087</small></div>
         <div className="live-target-end"><span>{updatedAt ? 'Last updated ' + formatTime(updatedAt) : 'Waiting for connection'}</span>{data && <a href={targetUrl} target="_blank" rel="noreferrer">Open target <Icon name="external" size={14} /></a>}</div>
       </div>
       <div className="live-metrics">

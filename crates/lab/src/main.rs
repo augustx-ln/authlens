@@ -1,15 +1,15 @@
 use axum::{
     Json, Router,
     extract::{ConnectInfo, State},
-    http::{HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -60,6 +60,100 @@ struct Snapshot {
     findings: Vec<Finding>,
     total_events: u64,
     target_url: String,
+}
+
+#[derive(Deserialize)]
+struct IngestEvent {
+    source: String,
+    method: String,
+    path: String,
+    status: u16,
+    action: Option<String>,
+}
+
+async fn ingest(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<IngestEvent>,
+) -> StatusCode {
+    let Ok(token) = std::env::var("LAB_INGEST_TOKEN") else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    if token.len() < 32
+        || headers.get("x-lab-token").and_then(|v| v.to_str().ok()) != Some(token.as_str())
+    {
+        return StatusCode::UNAUTHORIZED;
+    }
+    if input.source.parse::<IpAddr>().is_err()
+        || input.method.len() > 12
+        || input.path.len() > 180
+        || !input.path.starts_with('/')
+        || input.status < 100
+        || input.status > 599
+        || !input.method.bytes().all(|c| c.is_ascii_uppercase())
+        || input.path.chars().any(char::is_control)
+    {
+        return StatusCode::BAD_REQUEST;
+    }
+    let event = Event {
+        at_ms: now_ms(),
+        source: input.source,
+        kind: "http",
+        detail: format!("{} {}", input.method, input.path),
+        port: 8080,
+        status: Some(input.status),
+    };
+    let mut lab = state.lock().expect("lab state mutex poisoned");
+    lab.record(event.clone());
+    if matches!(
+        input.action.as_deref(),
+        Some("login_failed" | "login_success")
+    ) {
+        let failures = lab
+            .events
+            .iter()
+            .filter(|item| {
+                item.source == event.source
+                    && item.detail == "POST /login"
+                    && item.status == Some(401)
+                    && event.at_ms.saturating_sub(item.at_ms) <= 600_000
+            })
+            .count();
+        if failures >= 5 {
+            if input.action.as_deref() == Some("login_failed") {
+                lab.upsert(
+                    format!("bank-login:{}", event.source),
+                    "Repeated bank sign-in failures",
+                    "Medium",
+                    &event,
+                    format!("{failures} failed sign-ins from this observed source in 10 minutes"),
+                    failures,
+                );
+            } else {
+                lab.upsert(
+                    format!("bank-followup:{}", event.source),
+                    "Bank sign-in after repeated failures",
+                    "High",
+                    &event,
+                    format!(
+                        "A sign-in succeeded after {failures} failures from this observed source"
+                    ),
+                    failures + 1,
+                );
+            }
+        }
+    }
+    if input.action.as_deref() == Some("cross_account_read") {
+        lab.upsert(
+            format!("bank-access:{}", event.source),
+            "Cross-account statement access",
+            "High",
+            &event,
+            "A customer session read another synthetic customer's statement".to_owned(),
+            1,
+        );
+    }
+    StatusCode::NO_CONTENT
 }
 
 fn now_ms() -> u64 {
@@ -230,10 +324,12 @@ impl LabState {
             events: self.events.iter().cloned().collect(),
             findings: self.findings.iter().cloned().collect(),
             total_events: self.total_events,
-            target_url: format!(
-                "http://{}:8080/",
-                std::env::var("LAB_BIND_IP").unwrap_or_else(|_| "localhost".to_owned())
-            ),
+            target_url: std::env::var("LAB_TARGET_URL").unwrap_or_else(|_| {
+                format!(
+                    "http://{}:8080/",
+                    std::env::var("LAB_BIND_IP").unwrap_or_else(|_| "localhost".to_owned())
+                )
+            }),
         }
     }
 }
@@ -402,6 +498,7 @@ async fn main() -> std::io::Result<()> {
     let dist = std::env::var("AUTHLENS_WEB_DIST").unwrap_or_else(|_| "web/dist".to_owned());
     let monitor = Router::new()
         .route("/api/live", get(snapshot))
+        .route("/api/lab-event", post(ingest))
         .route_service("/monitor", ServeFile::new(format!("{dist}/index.html")))
         .route_service(
             "/favicon.svg",

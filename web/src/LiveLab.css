@@ -123,6 +123,7 @@
 @keyframes live-finding-enter { 0% { background: #46351e; box-shadow: inset 3px 0 var(--live-amber); } 55% { background: #2d2b24; box-shadow: inset 3px 0 var(--live-amber); } 100% { background: transparent; box-shadow: inset 3px 0 transparent; } }
 .live-severity { font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .05em; }
 .live-severity.medium { color: var(--live-amber); }
+.live-severity.high { color: #ff8e85; }
 .live-severity.info { color: var(--live-blue); }
 .live-empty { padding: 28px 20px; color: var(--live-secondary); font-size: 13px; line-height: 1.5; }
 
