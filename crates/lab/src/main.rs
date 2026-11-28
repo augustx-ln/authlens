@@ -184,6 +184,11 @@ async fn ingest_icmp(
     } else {
         "Blocked"
     };
+    let source_sensor = if outcome == "Allowed" {
+        "Windows Firewall allowed-packet log"
+    } else {
+        "Windows Firewall dropped-packet log"
+    };
     let suffix = outcome.to_ascii_lowercase();
     let (action, description) = match (input.icmp_type, input.icmp_code) {
         (8, 0) => ("icmp_echo_request", "ICMP echo request"),
@@ -218,7 +223,7 @@ async fn ingest_icmp(
                 "Dropped by Windows Firewall".to_owned()
             }),
             user_agent: None,
-            source_sensor: Some("Windows Firewall dropped-packet log".to_owned()),
+            source_sensor: Some(source_sensor.to_owned()),
         });
     StatusCode::NO_CONTENT
 }
@@ -910,5 +915,16 @@ mod tests {
         assert_eq!(lab.findings[0].source, "192.0.2.10");
         assert_eq!(lab.findings[0].event_ids, vec![5, 4, 3, 2, 1]);
         assert_eq!(lab.findings[0].first_ms, 1_000);
+    }
+
+    #[test]
+    fn accepted_echo_requests_are_activity_without_a_blocked_finding() {
+        let mut ping = event(1_000, "192.0.2.10", "icmp", "ICMP echo request", 0, None);
+        ping.action = Some("icmp_echo_request_allowed".to_owned());
+        ping.outcome = Some("Allowed".to_owned());
+        let mut lab = LabState::default();
+        lab.record(ping);
+        assert_eq!(lab.events.len(), 1);
+        assert!(lab.findings.is_empty());
     }
 }
