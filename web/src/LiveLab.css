@@ -8,6 +8,7 @@
   --live-muted: #91a6b2;
   --live-mint: #69dfbe;
   --live-blue: #80bfff;
+  --live-violet: #b7a2ff;
   --live-amber: #ffca75;
   min-height: 100vh;
   color: var(--live-text);
@@ -73,12 +74,14 @@
 .live-chart-label { fill: var(--live-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .live-chart-http { fill: var(--live-mint); transition: y .55s ease-out, height .55s ease-out; }
 .live-chart-tcp { fill: var(--live-blue); transition: y .55s ease-out, height .55s ease-out; }
+.live-chart-icmp { fill: var(--live-violet); transition: y .55s ease-out, height .55s ease-out; }
 .live-chart-finding { fill: var(--live-amber); stroke: #4f3820; stroke-width: 2; animation: live-marker-enter .55s ease-out; transform-origin: center; transform-box: fill-box; }
 .live-chart-legend { display: flex; justify-content: flex-end; gap: 17px; color: var(--live-secondary); font-size: 11px; }
 .live-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .live-chart-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
 .live-chart-legend .is-http { background: var(--live-mint); }
 .live-chart-legend .is-tcp { background: var(--live-blue); }
+.live-chart-legend .is-icmp { background: var(--live-violet); }
 .live-chart-legend .is-finding { background: var(--live-amber); border-radius: 50%; }
 .live-flow-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px 0; }
 .live-flow-heading strong { font-size: 15px; }

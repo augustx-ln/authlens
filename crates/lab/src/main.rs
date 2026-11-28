@@ -100,6 +100,15 @@ struct HostConnection {
     port: u16,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostIcmp {
+    source: String,
+    target: String,
+    icmp_type: u8,
+    icmp_code: u8,
+}
+
 fn require_token(headers: &HeaderMap) -> Result<(), StatusCode> {
     let token = std::env::var("LAB_INGEST_TOKEN").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     if token.len() < 32
@@ -138,6 +147,58 @@ async fn ingest_connection(
             reason: None,
             user_agent: None,
             source_sensor: Some("Windows VMnet8 listener".to_owned()),
+        });
+    StatusCode::NO_CONTENT
+}
+
+async fn ingest_icmp(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<HostIcmp>,
+) -> StatusCode {
+    if let Err(status) = require_token(&headers) {
+        return status;
+    }
+    let Ok(source) = input.source.parse::<IpAddr>() else {
+        return StatusCode::BAD_REQUEST;
+    };
+    let Ok(target) = input.target.parse::<IpAddr>() else {
+        return StatusCode::BAD_REQUEST;
+    };
+    let expected = std::env::var("LAB_BIND_IP").unwrap_or_default();
+    if !source.is_ipv4() || !target.is_ipv4() || input.target != expected {
+        return StatusCode::BAD_REQUEST;
+    }
+    let (action, description) = match (input.icmp_type, input.icmp_code) {
+        (8, 0) => ("icmp_echo_request_blocked", "ICMP echo request"),
+        (0, 0) => ("icmp_echo_reply_blocked", "ICMP echo reply"),
+        (3, _) => (
+            "icmp_destination_unreachable_blocked",
+            "ICMP destination unreachable",
+        ),
+        (11, _) => ("icmp_time_exceeded_blocked", "ICMP time exceeded"),
+        _ => ("icmp_packet_blocked", "ICMP packet"),
+    };
+    state
+        .lock()
+        .expect("lab state mutex poisoned")
+        .record(Event {
+            at_ms: now_ms(),
+            source: input.source,
+            kind: "icmp",
+            detail: format!(
+                "{description} (type {}, code {})",
+                input.icmp_type, input.icmp_code
+            ),
+            port: 0,
+            status: None,
+            action: Some(action.to_owned()),
+            actor: None,
+            target: Some(input.target),
+            outcome: Some("Blocked".to_owned()),
+            reason: Some("Dropped by Windows Firewall".to_owned()),
+            user_agent: None,
+            source_sensor: Some("Windows Firewall dropped-packet log".to_owned()),
         });
     StatusCode::NO_CONTENT
 }
@@ -299,6 +360,28 @@ impl LabState {
                     ports.len(),
                 );
             }
+        } else if event.kind == "icmp" {
+            if event.action.as_deref() == Some("icmp_echo_request_blocked") {
+                let count = self
+                    .events
+                    .iter()
+                    .filter(|item| {
+                        item.source == event.source
+                            && item.action.as_deref() == Some("icmp_echo_request_blocked")
+                            && event.at_ms.saturating_sub(item.at_ms) <= 10_000
+                    })
+                    .count();
+                if count >= 5 {
+                    self.upsert(
+                        format!("icmp-echo:{}", event.source),
+                        "Repeated blocked ICMP echo requests",
+                        "Medium",
+                        &event,
+                        format!("{count} echo requests dropped by Windows Firewall in 10 seconds"),
+                        count,
+                    );
+                }
+            }
         } else if event.kind == "http" {
             let recent: Vec<_> = self
                 .events
@@ -396,6 +479,14 @@ impl LabState {
         count: usize,
     ) {
         let event_ids = self.related_event_ids(&id, event);
+        let first_ms = event_ids
+            .last()
+            .and_then(|sequence| {
+                self.events
+                    .get((self.total_events - sequence) as usize)
+                    .map(|item| item.at_ms)
+            })
+            .unwrap_or(event.at_ms);
         if let Some(index) = self.findings.iter().position(|item| item.id == id) {
             let mut finding = self.findings.remove(index).expect("finding exists");
             finding.last_ms = event.at_ms;
@@ -410,7 +501,7 @@ impl LabState {
                 severity,
                 source: event.source.clone(),
                 evidence,
-                first_ms: event.at_ms,
+                first_ms,
                 last_ms: event.at_ms,
                 count,
                 event_ids,
@@ -438,6 +529,8 @@ impl LabState {
                 }
                 if id.starts_with("ports:") {
                     item.kind == "connection"
+                } else if id.starts_with("icmp-echo:") {
+                    item.action.as_deref() == Some("icmp_echo_request_blocked")
                 } else if id.starts_with("paths:") {
                     item.kind == "http" && item.status == Some(404)
                 } else if id.starts_with("bank-login:") {
@@ -654,6 +747,7 @@ async fn main() -> std::io::Result<()> {
         .route("/api/live", get(snapshot))
         .route("/api/lab-event", post(ingest))
         .route("/api/lab-connection", post(ingest_connection))
+        .route("/api/lab-icmp", post(ingest_icmp))
         .route_service("/monitor", ServeFile::new(format!("{dist}/index.html")))
         .route_service(
             "/favicon.svg",
@@ -782,5 +876,19 @@ mod tests {
         }
         assert_eq!(lab.events.len(), 4);
         assert_eq!(lab.findings[0].source, "192.0.2.10");
+    }
+
+    #[test]
+    fn repeated_blocked_echo_requests_link_to_their_events() {
+        let mut lab = LabState::default();
+        for at_ms in 1_000..1_005 {
+            let mut ping = event(at_ms, "192.0.2.10", "icmp", "ICMP echo request", 0, None);
+            ping.action = Some("icmp_echo_request_blocked".to_owned());
+            lab.record(ping);
+        }
+        assert_eq!(lab.findings[0].title, "Repeated blocked ICMP echo requests");
+        assert_eq!(lab.findings[0].source, "192.0.2.10");
+        assert_eq!(lab.findings[0].event_ids, vec![5, 4, 3, 2, 1]);
+        assert_eq!(lab.findings[0].first_ms, 1_000);
     }
 }

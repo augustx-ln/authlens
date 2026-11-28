@@ -185,18 +185,21 @@ impl BinXml {
 
     fn event_data(&mut self, event: &LiveEvent) -> Result<(), String> {
         let is_http = event.kind == "http";
+        let is_icmp = event.kind == "icmp";
         let values = [
             (
                 "EventType",
                 if is_http {
                     "HTTP request"
+                } else if is_icmp {
+                    "ICMP packet"
                 } else {
                     "TCP connection"
                 },
             ),
             ("SourceAddress", event.source.as_str()),
             ("DestinationPort", ""),
-            ("Protocol", "TCP"),
+            ("Protocol", if is_icmp { "ICMP" } else { "TCP" }),
             ("Detail", ""),
             ("ResponseStatus", ""),
         ];
@@ -204,7 +207,9 @@ impl BinXml {
             .into_iter()
             .map(|(name, value)| (name, value.to_owned()))
             .collect();
-        fields[2].1 = event.port.to_string();
+        if !is_icmp {
+            fields[2].1 = event.port.to_string();
+        }
         fields[4].1 = event.detail.clone();
         if is_http {
             fields[5].1 = event
@@ -349,7 +354,11 @@ impl BinXml {
 }
 
 fn event_id(event: &LiveEvent) -> u32 {
-    if event.kind == "http" { 1001 } else { 1000 }
+    match event.kind.as_str() {
+        "http" => 1001,
+        "icmp" => 1002,
+        _ => 1000,
+    }
 }
 
 fn system_time(at_ms: u64) -> String {

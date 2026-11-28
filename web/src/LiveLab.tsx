@@ -5,7 +5,7 @@ import './LiveLab.css'
 type LiveEvent = {
   atMs: number
   source: string
-  kind: 'connection' | 'http'
+  kind: 'connection' | 'http' | 'icmp'
   detail: string
   port: number
   status: number | null
@@ -50,6 +50,9 @@ const actionLabels: Record<string, string> = {
   authorization_denied: 'Access denied', page_not_found: 'Unknown page requested',
   admin_export: 'Customer accounts exported', logout: 'Signed out',
   unsupported_method: 'Unsupported method rejected', invalid_request: 'Invalid request rejected',
+  icmp_echo_request_blocked: 'Blocked ICMP echo request', icmp_echo_reply_blocked: 'Blocked ICMP echo reply',
+  icmp_destination_unreachable_blocked: 'Blocked ICMP destination unreachable',
+  icmp_time_exceeded_blocked: 'Blocked ICMP time exceeded', icmp_packet_blocked: 'Blocked ICMP packet',
 }
 const activityLabel = (event: LiveEvent) => event.action ? actionLabels[event.action] ?? event.action : event.detail
 const resultLabel = (event: LiveEvent) => event.outcome ? event.outcome + (event.status ? ' · ' + event.status : '') : event.status ?? 'Accepted'
@@ -58,6 +61,7 @@ const searchFields: Record<string, (event: LiveEvent) => string> = {
   target: event => event.target ?? '', status: event => String(event.status ?? ''),
   outcome: event => event.outcome ?? '', reason: event => event.reason ?? '',
   sensor: event => event.sourceSensor ?? '',
+  protocol: event => event.kind === 'connection' ? 'tcp' : event.kind,
 }
 function matchesQuery(event: LiveEvent, query: string) {
   return query.split(/\s+/).every(term => {
@@ -84,8 +88,8 @@ function Icon({ name, size = 18 }: { name: 'download' | 'external' | 'search' | 
 
 function ActivityChart({ events, findings, now, minutes }: { events: LiveEvent[]; findings: Finding[]; now: number; minutes: number }) {
   const buckets = activityBuckets(events, findings, now, minutes)
-  const max = Math.max(1, ...buckets.map(bucket => bucket.http + bucket.tcp))
-  const total = buckets.reduce((sum, bucket) => sum + bucket.http + bucket.tcp, 0)
+  const max = Math.max(1, ...buckets.map(bucket => bucket.http + bucket.tcp + bucket.icmp))
+  const total = buckets.reduce((sum, bucket) => sum + bucket.http + bucket.tcp + bucket.icmp, 0)
   const baseline = 140
   const chartHeight = 104
   const firstX = 46
@@ -95,7 +99,7 @@ function ActivityChart({ events, findings, now, minutes }: { events: LiveEvent[]
 
   return <div className="live-chart-wrap">
     <div className="live-chart-summary"><strong>{total.toLocaleString()}</strong><span>events in view · latest 500 retained</span></div>
-    <svg className="live-chart" viewBox={'0 0 ' + chartWidth + ' 184'} role="img" aria-label={'Traffic in the last ' + minutes + ' minutes: ' + total + ' retained events. Mint bars show HTTP, blue bars show TCP, amber markers show findings.'}>
+    <svg className="live-chart" viewBox={'0 0 ' + chartWidth + ' 184'} role="img" aria-label={'Traffic in the last ' + minutes + ' minutes: ' + total + ' retained events. Mint bars show HTTP, blue bars show TCP, violet bars show ICMP, amber markers show findings.'}>
       <line x1="38" x2={chartEnd} y1="36" y2="36" className="live-chart-grid" />
       <line x1="38" x2={chartEnd} y1="88" y2="88" className="live-chart-grid" />
       <line x1="38" x2={chartEnd} y1={baseline} y2={baseline} className="live-chart-axis" />
@@ -105,16 +109,18 @@ function ActivityChart({ events, findings, now, minutes }: { events: LiveEvent[]
         const x = firstX + index * step
         const httpHeight = bucket.http / max * chartHeight
         const tcpHeight = bucket.tcp / max * chartHeight
+        const icmpHeight = bucket.icmp / max * chartHeight
         return <g key={bucket.atMs}>
-          <title>{shortTimeFormat.format(bucket.atMs) + ' · ' + bucket.http + ' HTTP · ' + bucket.tcp + ' TCP · ' + bucket.findings + ' findings'}</title>
+          <title>{shortTimeFormat.format(bucket.atMs) + ' · ' + bucket.http + ' HTTP · ' + bucket.tcp + ' TCP · ' + bucket.icmp + ' ICMP · ' + bucket.findings + ' findings'}</title>
           <rect x={x} y={baseline - httpHeight} width="23" height={httpHeight} rx="2" className="live-chart-http" />
           <rect x={x} y={baseline - httpHeight - tcpHeight} width="23" height={tcpHeight} rx="2" className="live-chart-tcp" />
-          {bucket.findings > 0 && <circle cx={x + 11.5} cy={Math.max(19, baseline - httpHeight - tcpHeight - 9)} r="4.5" className="live-chart-finding" />}
+          <rect x={x} y={baseline - httpHeight - tcpHeight - icmpHeight} width="23" height={icmpHeight} rx="2" className="live-chart-icmp" />
+          {bucket.findings > 0 && <circle cx={x + 11.5} cy={Math.max(19, baseline - httpHeight - tcpHeight - icmpHeight - 9)} r="4.5" className="live-chart-finding" />}
         </g>
       })}
       {[0, Math.floor((minutes - 1) / 2), minutes - 1].map(index => <text key={index} x={firstX + index * step + 11.5} y="169" textAnchor="middle" className="live-chart-label">{shortTimeFormat.format(buckets[index].atMs)}</text>)}
     </svg>
-    <div className="live-chart-legend"><span><i className="is-http" />HTTP</span><span><i className="is-tcp" />TCP</span><span><i className="is-finding" />Finding</span></div>
+    <div className="live-chart-legend"><span><i className="is-http" />HTTP</span><span><i className="is-tcp" />TCP</span><span><i className="is-icmp" />ICMP</span><span><i className="is-finding" />Finding</span></div>
   </div>
 }
 
@@ -222,7 +228,8 @@ export default function LiveLab() {
     if (kindFilter !== 'all' && event.kind !== kindFilter) return false
     if (resultFilter === 'ok' && (event.status === null || event.status >= 400)) return false
     if (resultFilter === 'error' && (event.status === null || event.status < 400)) return false
-    if (resultFilter === 'accepted' && event.status !== null) return false
+    if (resultFilter === 'accepted' && event.kind !== 'connection') return false
+    if (resultFilter === 'blocked' && event.kind !== 'icmp') return false
     return !normalizedQuery || matchesQuery(event, normalizedQuery)
   }) ?? []
 
@@ -259,14 +266,14 @@ export default function LiveLab() {
     </header>
     <main className="live-main">
       <div className="live-heading">
-        <div><p className="live-kicker">LIVE MONITOR</p><h1>Lab activity at a glance</h1><p>Watch connections, web requests, and detection findings as they arrive.</p></div>
+        <div><p className="live-kicker">LIVE MONITOR</p><h1>Lab activity at a glance</h1><p>Watch connections, web requests, blocked ICMP, and detection findings as they arrive.</p></div>
         <div className="live-heading-actions">
           <span className={'live-status ' + (connected ? frozen ? 'is-frozen' : 'is-connected' : 'is-disconnected')} role="status"><i />{connected ? frozen ? 'View frozen' : 'Monitoring live' : data ? 'Reconnecting…' : 'Connecting…'}</span>
           <button className="live-download" type="button" onClick={downloadEvents} disabled={!data?.events.length || exporting}><Icon name="download" size={16} />{exporting ? 'Creating EVTX…' : 'Download .evtx'}</button>
         </div>
       </div>
       <div className="live-target">
-        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP target on 8080 · TCP probe ports 8081–8087</small></div>
+        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP 8080 · TCP probes 8081–8087 · blocked ICMP on VMnet8</small></div>
         <div className="live-target-end"><span>{updatedAt ? 'Last updated ' + formatTime(updatedAt) : 'Waiting for connection'}</span>{data && <a href={targetUrl} target="_blank" rel="noreferrer">Open target <Icon name="external" size={14} /></a>}</div>
       </div>
       <div className="live-metrics">
@@ -282,9 +289,9 @@ export default function LiveLab() {
           <div className="live-flow">
             <div className="live-flow-node"><span>OBSERVED SOURCE</span><strong>{latestEvent?.source ?? '—'}</strong></div>
             <div className={'live-flow-route ' + (connected && !frozen ? 'is-listening' : '')}><span className="live-flow-line" />{activityPulse > 0 && !frozen && connected && <span key={activityPulse} className="live-flow-pulse" />}</div>
-            <div className={'live-flow-node is-target ' + (findingPulse > 0 && !frozen && connected ? 'has-finding' : '')} key={findingPulse}><span>LAB TARGET</span><strong>{':' + (latestEvent?.port ?? '8080–8087')}</strong></div>
+            <div className={'live-flow-node is-target ' + (findingPulse > 0 && !frozen && connected ? 'has-finding' : '')} key={findingPulse}><span>LAB TARGET</span><strong>{latestEvent?.kind === 'icmp' ? 'ICMP' : ':' + (latestEvent?.port ?? '8080–8087')}</strong></div>
           </div>
-          <p className="live-flow-caption">{latestEvent ? 'Last observed ' + formatTime(latestEvent.atMs) + ' · ' + (latestEvent.kind === 'http' ? 'HTTP ' : 'TCP ') + latestEvent.detail : 'Send traffic to the lab target to see activity here.'}</p>
+          <p className="live-flow-caption">{latestEvent ? 'Last observed ' + formatTime(latestEvent.atMs) + ' · ' + (latestEvent.kind === 'icmp' ? '' : latestEvent.kind === 'http' ? 'HTTP ' : 'TCP ') + latestEvent.detail : 'Send traffic to the lab target to see activity here.'}</p>
           {visible && updatedAt ? <><div className="live-chart-desktop"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={15} /></div><div className="live-chart-mobile"><ActivityChart events={visible.events} findings={visible.findings} now={frozen?.atMs ?? updatedAt} minutes={8} /></div></> : <div className="live-chart-loading">Connecting to the lab monitor…</div>}
         </section>
         <section className="live-panel live-findings-panel" aria-labelledby="findings-title">
@@ -296,22 +303,22 @@ export default function LiveLab() {
         <div className="live-panel-heading"><div><span className="live-kicker">EVENT STREAM</span><h2 id="stream-title">Latest activity</h2></div><div className="live-stream-meta"><span>{shown.length.toLocaleString() + ' shown · ' + (visible?.events.length.toLocaleString() ?? 0) + ' retained'}</span>{!frozen && recentBatch && <strong role="status">{'+' + recentBatch.count + ' new'}</strong>}</div></div>
         <div className="live-stream-toolbar">
           <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search or filter source:, actor:, action:, status:" aria-label="Search events" /></label>
-          <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option></select>
-          <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option></select>
+          <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option><option value="icmp">ICMP</option></select>
+          <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option><option value="blocked">ICMP blocked</option></select>
           <button className={'live-freeze ' + (frozen ? 'is-frozen' : '')} type="button" onClick={() => setFrozen(frozen ? null : data ? { snapshot: data, atMs: Date.now() } : null)} disabled={!data}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume live' + (unseen ? ' · ' + unseen + ' new' : '') : 'Freeze view'}</button>
         </div>
         {focusedFinding && <div className="live-evidence-filter" role="status"><span>Related events for <strong>{focusedFinding.title}</strong> · {shown.length} retained</span><button type="button" onClick={() => setFocusedFindingId(null)}>Show all events</button></div>}
-        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Activity</th><th>Account / actor</th><th>Target</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + activityLabel(event) + ' from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><strong className="live-activity-name">{activityLabel(event)}</strong>{event.action && <small className="live-activity-request">{event.detail}</small>}</td><td>{event.actor || '—'}</td><td>{event.target || '—'}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 ? 'is-error' : '')}>{resultLabel(event)}</span></td></tr>) : <tr><td colSpan={6} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
+        <div className="live-table-scroll" role="region" aria-label="Latest live events" tabIndex={0}><table><thead><tr><th>Time</th><th>Observed source</th><th>Activity</th><th>Account / actor</th><th>Target</th><th>Result</th></tr></thead><tbody>{shown.length ? shown.map(({ event, sequence }, index) => <tr key={sequence} className={!frozen && recentBatch && sequence >= recentBatch.first && sequence <= recentBatch.last ? 'live-row-new' : ''} style={{ animationDelay: Math.min(index, 6) * 55 + 'ms' }} onClick={() => setDetail({ type: 'event', value: event })} onKeyDown={key => { if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); setDetail({ type: 'event', value: event }) } }} tabIndex={0} aria-label={'View ' + activityLabel(event) + ' from ' + event.source}><td>{formatTime(event.atMs)}</td><td>{event.source}</td><td><strong className="live-activity-name">{activityLabel(event)}</strong>{event.action && <small className="live-activity-request">{event.detail}</small>}</td><td>{event.actor || '—'}</td><td>{event.target || '—'}</td><td><span className={'live-result ' + ((event.status ?? 0) >= 400 || event.kind === 'icmp' ? 'is-error' : '')}>{resultLabel(event)}</span></td></tr>) : <tr><td colSpan={6} className="live-empty-cell">{visible?.events.length ? 'No events match these filters.' : 'Waiting for traffic to the lab target.'}</td></tr>}</tbody></table></div>
         {exportStatus && <p className="live-export-status" role="status">{exportStatus}</p>}
       </section>
-      <p className="live-footnote">The local VMnet8 listener captures peer IPs before Docker forwarding. Container-only events may still show a gateway. Events and findings stay in monitor memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log.</p>
+      <p className="live-footnote">The VMnet8 listener captures HTTP and TCP peer IPs; blocked ICMP requires Windows Firewall dropped-packet logging. Container-only events may still show a gateway. Events and findings stay in monitor memory and clear on restart. The EVTX export contains up to 500 AuthLens lab events, not a Windows Security log.</p>
     </main>
     {detail && <div className="live-detail-backdrop" onClick={() => setDetail(null)}>
       <aside className="live-detail" role="dialog" aria-modal="true" aria-label={detail.type === 'event' ? 'Event details' : 'Finding details'} onClick={event => event.stopPropagation()}>
         <div className="live-detail-heading"><div><span className="live-kicker">{detail.type === 'event' ? 'EVENT DETAILS' : 'FINDING DETAILS'}</span><h2>{detail.type === 'event' ? activityLabel(detail.value) : detail.value.title}</h2></div><button ref={closeButton} type="button" onClick={() => setDetail(null)} aria-label="Close details"><Icon name="close" /></button></div>
-        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Captured by</dt><dd>{detail.value.sourceSensor || 'Docker container'}</dd><dt>Account / actor</dt><dd>{detail.value.actor || 'Unknown'}</dd><dt>Event code</dt><dd>{detail.value.action || '—'}</dd><dt>Target</dt><dd>{detail.value.target || '—'}</dd><dt>Outcome</dt><dd>{detail.value.outcome || '—'}</dd><dt>Reason</dt><dd>{detail.value.reason || '—'}</dd><dt>HTTP / TCP</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : 'TCP connection'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.port}</dd><dt>HTTP status</dt><dd>{detail.value.status ?? '—'}</dd><dt>User-Agent</dt><dd>{detail.value.userAgent || '—'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
+        {detail.type === 'event' ? <dl><dt>Observed at</dt><dd>{new Date(detail.value.atMs).toLocaleString()}</dd><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Captured by</dt><dd>{detail.value.sourceSensor || 'Docker container'}</dd><dt>Account / actor</dt><dd>{detail.value.actor || 'Unknown'}</dd><dt>Event code</dt><dd>{detail.value.action || '—'}</dd><dt>Target</dt><dd>{detail.value.target || '—'}</dd><dt>Outcome</dt><dd>{detail.value.outcome || '—'}</dd><dt>Reason</dt><dd>{detail.value.reason || '—'}</dd><dt>Protocol</dt><dd>{detail.value.kind === 'http' ? 'HTTP' : detail.value.kind === 'icmp' ? 'ICMP' : 'TCP'}</dd><dt>Request / connection</dt><dd>{detail.value.detail}</dd><dt>Destination port</dt><dd>{detail.value.kind === 'icmp' ? '—' : detail.value.port}</dd><dt>HTTP status</dt><dd>{detail.value.status ?? '—'}</dd><dt>User-Agent</dt><dd>{detail.value.userAgent || '—'}</dd></dl> : <><span className={'live-severity ' + detail.value.severity.toLowerCase()}>{detail.value.severity}</span><p className="live-detail-evidence">{detail.value.evidence}</p><dl><dt>Observed source</dt><dd>{detail.value.source}</dd><dt>Occurrences</dt><dd>{detail.value.count}</dd><dt>First observed</dt><dd>{new Date(detail.value.firstMs).toLocaleString()}</dd><dt>Latest observed</dt><dd>{new Date(detail.value.lastMs).toLocaleString()}</dd></dl></>}
         {detail.type === 'finding' && <button className="live-evidence-action" type="button" onClick={() => { setFocusedFindingId(detail.value.id); setQuery(''); setKindFilter('all'); setResultFilter('all'); setDetail(null); window.setTimeout(() => streamPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }}>View related events ({detail.value.eventIds.length})</button>}
-        <p className="live-detail-note">{detail.type === 'event' && detail.value.sourceSensor ? 'The observed source was captured by the local listener.' : 'Container-only observations may show a Docker gateway address.'}</p>
+        <p className="live-detail-note">{detail.type === 'finding' ? 'Open related events to inspect the observations behind this finding.' : detail.value.sourceSensor ? 'The observed source was recorded by the named local sensor.' : 'Container-only observations may show a Docker gateway address.'}</p>
       </aside>
     </div>}
   </div>

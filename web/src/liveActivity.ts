@@ -4,11 +4,12 @@ export type ActivityBucket = {
   atMs: number
   http: number
   tcp: number
+  icmp: number
   findings: number
 }
 
 export function activityBuckets(
-  events: { atMs: number; kind: 'http' | 'connection' }[],
+  events: { atMs: number; kind: 'http' | 'connection' | 'icmp' }[],
   findings: { lastMs: number }[],
   now: number,
   minutes = 15,
@@ -18,12 +19,13 @@ export function activityBuckets(
     atMs: start + index * MINUTE,
     http: 0,
     tcp: 0,
+    icmp: 0,
     findings: 0,
   }))
 
   for (const event of events) {
     const index = Math.floor((event.atMs - start) / MINUTE)
-    if (index >= 0 && index < minutes) buckets[index][event.kind === 'http' ? 'http' : 'tcp']++
+    if (index >= 0 && index < minutes) buckets[index][event.kind === 'http' ? 'http' : event.kind === 'icmp' ? 'icmp' : 'tcp']++
   }
   for (const finding of findings) {
     const index = Math.floor((finding.lastMs - start) / MINUTE)
