@@ -107,6 +107,7 @@ struct HostIcmp {
     target: String,
     icmp_type: u8,
     icmp_code: u8,
+    observed_at_ms: Option<u64>,
 }
 
 fn require_token(headers: &HeaderMap) -> Result<(), StatusCode> {
@@ -169,6 +170,11 @@ async fn ingest_icmp(
     if !source.is_ipv4() || !target.is_ipv4() || input.target != expected {
         return StatusCode::BAD_REQUEST;
     }
+    let received_at_ms = now_ms();
+    let at_ms = input.observed_at_ms.filter(|observed| {
+        *observed <= received_at_ms.saturating_add(5_000)
+            && received_at_ms.saturating_sub(*observed) <= 300_000
+    });
     let (action, description) = match (input.icmp_type, input.icmp_code) {
         (8, 0) => ("icmp_echo_request_blocked", "ICMP echo request"),
         (0, 0) => ("icmp_echo_reply_blocked", "ICMP echo reply"),
@@ -183,7 +189,7 @@ async fn ingest_icmp(
         .lock()
         .expect("lab state mutex poisoned")
         .record(Event {
-            at_ms: now_ms(),
+            at_ms: at_ms.unwrap_or(received_at_ms),
             source: input.source,
             kind: "icmp",
             detail: format!(
@@ -881,7 +887,7 @@ mod tests {
     #[test]
     fn repeated_blocked_echo_requests_link_to_their_events() {
         let mut lab = LabState::default();
-        for at_ms in 1_000..1_005 {
+        for at_ms in (1_000..=5_000).step_by(1_000) {
             let mut ping = event(at_ms, "192.0.2.10", "icmp", "ICMP echo request", 0, None);
             ping.action = Some("icmp_echo_request_blocked".to_owned());
             lab.record(ping);
