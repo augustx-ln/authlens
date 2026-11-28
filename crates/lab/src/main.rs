@@ -345,6 +345,13 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn is_probe_path(event: &Event) -> bool {
+    event.kind == "http"
+        && (event.status == Some(404)
+            || (event.status == Some(302)
+                && event.action.as_deref() == Some("authentication_required")))
+}
+
 impl LabState {
     fn record(&mut self, event: Event) {
         // shortcut: Docker Desktop probes published TCP ports at startup; ignore the first ten seconds.
@@ -418,9 +425,9 @@ impl LabState {
                 })
                 .collect();
             let requests = recent.len();
-            let missing_paths: HashSet<_> = recent
+            let probe_paths: HashSet<_> = recent
                 .iter()
-                .filter(|item| item.status == Some(404))
+                .filter(|item| is_probe_path(item))
                 .filter_map(|item| item.detail.split_once(' ').map(|(_, path)| path.to_owned()))
                 .collect();
             let unusual_methods: HashSet<_> = recent
@@ -443,15 +450,15 @@ impl LabState {
                     requests,
                 );
 
-                if missing_paths.len() >= 6 || unusual_methods.len() >= 2 {
+                if probe_paths.len() >= 6 || unusual_methods.len() >= 2 {
                     self.upsert(
                         format!("web-recon:{}", event.source),
                         "Possible web reconnaissance burst",
                         "High",
                         &event,
                         format!(
-                            "{requests} requests in 10 seconds; {} distinct missing paths; methods rejected with 405: {}",
-                            missing_paths.len(),
+                            "{requests} requests in 10 seconds; {} distinct missing or login-gated paths; methods rejected with 405: {}",
+                            probe_paths.len(),
                             if unusual_methods.is_empty() { "none".to_owned() } else { unusual_methods.into_iter().collect::<Vec<_>>().join(", ") },
                         ),
                         requests,
@@ -465,7 +472,7 @@ impl LabState {
                 .filter(|item| {
                     item.source == event.source
                         && item.kind == "http"
-                        && item.status == Some(404)
+                        && is_probe_path(item)
                         && event.at_ms.saturating_sub(item.at_ms) <= 60_000
                 })
                 .filter_map(|item| item.detail.split_once(' ').map(|(_, path)| path))
@@ -476,7 +483,10 @@ impl LabState {
                     "Possible web path enumeration",
                     "Medium",
                     &event,
-                    format!("{} distinct missing paths in 60 seconds", paths.len()),
+                    format!(
+                        "{} distinct missing or login-gated paths in 60 seconds",
+                        paths.len()
+                    ),
                     paths.len(),
                 );
             }
@@ -557,7 +567,7 @@ impl LabState {
                 } else if id.starts_with("icmp-echo:") {
                     item.action.as_deref() == Some("icmp_echo_request_blocked")
                 } else if id.starts_with("paths:") {
-                    item.kind == "http" && item.status == Some(404)
+                    is_probe_path(item)
                 } else if id.starts_with("bank-login:") {
                     item.detail == "POST /login" && item.status == Some(401)
                 } else if id.starts_with("bank-followup:") {
@@ -831,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn path_enumeration_counts_distinct_missing_paths_only() {
+    fn path_enumeration_counts_distinct_missing_and_login_gated_paths() {
         let mut lab = LabState::default();
         for n in 0..5 {
             lab.record(event(
@@ -869,6 +879,54 @@ mod tests {
             Some(404),
         ));
         assert_eq!(lab.findings[0].title, "Possible web path enumeration");
+    }
+
+    #[test]
+    fn login_redirect_path_sweep_triggers_path_and_correlated_recon_findings() {
+        let mut lab = LabState::default();
+        let mut homepage = event(1_000, "192.0.2.1", "http", "GET /", 8080, Some(302));
+        homepage.action = Some("account_overview_redirect".to_owned());
+        lab.record(homepage);
+
+        for n in 0..6 {
+            let mut probe = event(
+                2_000 + n,
+                "192.0.2.1",
+                "http",
+                &format!("GET /.probe/{n}"),
+                8080,
+                Some(302),
+            );
+            probe.action = Some("authentication_required".to_owned());
+            lab.record(probe);
+        }
+        assert!(
+            lab.findings
+                .iter()
+                .any(|finding| finding.title == "Possible web path enumeration")
+        );
+
+        for n in 0..6 {
+            lab.record(event(
+                3_000 + n,
+                "192.0.2.1",
+                "http",
+                "GET /login",
+                8080,
+                Some(200),
+            ));
+        }
+        let recon = lab
+            .findings
+            .iter()
+            .find(|finding| finding.title == "Possible web reconnaissance burst")
+            .expect("login-gated probes should contribute to a correlated burst");
+        assert_eq!(recon.severity, "High");
+        assert!(
+            recon
+                .evidence
+                .contains("6 distinct missing or login-gated paths")
+        );
     }
 
     #[test]

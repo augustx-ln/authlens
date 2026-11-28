@@ -79,7 +79,7 @@ The local listener can forward allowed or blocked ICMP records from Windows Fire
    curl -A 'WhatWeb/0.5' "http://$TARGET_IP:8080/"
    ```
 
-   The TCP scan produces a finding after four distinct probe ports in 30 seconds. Six distinct missing paths in 60 seconds trigger a path-enumeration finding. Twelve HTTP requests in 10 seconds trigger a rapid-probing finding, including successful requests. A high-priority correlated finding appears when a burst also includes six distinct missing paths or at least two methods rejected with `405`; it summarizes the request count, paths, and methods together. Known scanner User-Agents, common technology or exposure paths, traversal patterns, and uncommon HTTP methods (including `PUT`, `DELETE`, and `PATCH`) trigger a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
+   The TCP scan produces a finding after four distinct probe ports in 30 seconds. Six distinct missing paths or paths redirected to sign-in because authentication is required in 60 seconds trigger a path-enumeration finding. Twelve HTTP requests in 10 seconds trigger a rapid-probing finding, including successful requests. A high-priority correlated finding appears when a burst also includes six distinct missing or login-gated paths or at least two methods rejected with `405`; it summarizes the request count, paths, and methods together. Known scanner User-Agents, common technology or exposure paths, traversal patterns, and uncommon HTTP methods (including `PUT`, `DELETE`, and `PATCH`) trigger a fingerprinting finding. Findings identify patterns, not a specific tool with certainty.
 
 4. Stop the target when finished:
 
