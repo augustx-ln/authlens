@@ -232,7 +232,8 @@ export default function LiveLab() {
     if (resultFilter === 'ok' && (event.status === null || event.status >= 400)) return false
     if (resultFilter === 'error' && (event.status === null || event.status < 400)) return false
     if (resultFilter === 'accepted' && event.kind !== 'connection') return false
-    if (resultFilter === 'blocked' && event.kind !== 'icmp') return false
+    if (resultFilter === 'icmp-blocked' && (event.kind !== 'icmp' || event.outcome !== 'Blocked')) return false
+    if (resultFilter === 'icmp-allowed' && (event.kind !== 'icmp' || event.outcome !== 'Allowed')) return false
     return !normalizedQuery || matchesQuery(event, normalizedQuery)
   }) ?? []
 
@@ -307,7 +308,7 @@ export default function LiveLab() {
         <div className="live-stream-toolbar">
           <label className="live-search"><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search or filter source:, actor:, action:, status:" aria-label="Search events" /></label>
           <select value={kindFilter} onChange={event => setKindFilter(event.target.value)} aria-label="Filter event type"><option value="all">All types</option><option value="http">HTTP</option><option value="connection">TCP</option><option value="icmp">ICMP</option></select>
-          <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option><option value="blocked">ICMP blocked</option></select>
+          <select value={resultFilter} onChange={event => setResultFilter(event.target.value)} aria-label="Filter result"><option value="all">All results</option><option value="ok">HTTP below 400</option><option value="error">HTTP 4xx / 5xx</option><option value="accepted">TCP accepted</option><option value="icmp-blocked">ICMP blocked</option><option value="icmp-allowed">ICMP allowed</option></select>
           <button className={'live-freeze ' + (frozen ? 'is-frozen' : '')} type="button" onClick={() => setFrozen(frozen ? null : data ? { snapshot: data, atMs: Date.now() } : null)} disabled={!data}><Icon name={frozen ? 'play' : 'pause'} size={16} />{frozen ? 'Resume live' + (unseen ? ' · ' + unseen + ' new' : '') : 'Freeze view'}</button>
         </div>
         {focusedFinding && <div className="live-evidence-filter" role="status"><span>Related events for <strong>{focusedFinding.title}</strong> · {shown.length} retained</span><button type="button" onClick={() => setFocusedFindingId(null)}>Show all events</button></div>}
