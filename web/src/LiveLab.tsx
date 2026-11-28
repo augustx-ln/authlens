@@ -269,14 +269,14 @@ export default function LiveLab() {
     </header>
     <main className="live-main">
       <div className="live-heading">
-        <div><p className="live-kicker">LIVE MONITOR</p><h1>Lab activity at a glance</h1><p>Watch connections, web requests, blocked ICMP, and detection findings as they arrive.</p></div>
+        <div><p className="live-kicker">LIVE MONITOR</p><h1>Lab activity at a glance</h1><p>Watch connections, web requests, and allowed or blocked ICMP as they arrive.</p></div>
         <div className="live-heading-actions">
           <span className={'live-status ' + (connected ? frozen ? 'is-frozen' : 'is-connected' : 'is-disconnected')} role="status"><i />{connected ? frozen ? 'View frozen' : 'Monitoring live' : data ? 'Reconnecting…' : 'Connecting…'}</span>
           <button className="live-download" type="button" onClick={downloadEvents} disabled={!data?.events.length || exporting}><Icon name="download" size={16} />{exporting ? 'Creating EVTX…' : 'Download .evtx'}</button>
         </div>
       </div>
       <div className="live-target">
-        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP 8080 · TCP probes 8081–8087 · blocked ICMP on VMnet8</small></div>
+        <div><span>LAB TARGET</span><strong>{targetUrl}</strong><small>HTTP 8080 · TCP probes 8081–8087 · ICMP on VMnet8</small></div>
         <div className="live-target-end"><span>{updatedAt ? 'Last updated ' + formatTime(updatedAt) : 'Waiting for connection'}</span>{data && <a href={targetUrl} target="_blank" rel="noreferrer">Open target <Icon name="external" size={14} /></a>}</div>
       </div>
       <div className="live-metrics">
