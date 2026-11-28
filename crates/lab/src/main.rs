@@ -107,6 +107,7 @@ struct HostIcmp {
     target: String,
     icmp_type: u8,
     icmp_code: u8,
+    firewall_action: String,
     observed_at_ms: Option<u64>,
 }
 
@@ -170,20 +171,29 @@ async fn ingest_icmp(
     if !source.is_ipv4() || !target.is_ipv4() || input.target != expected {
         return StatusCode::BAD_REQUEST;
     }
+    if !matches!(input.firewall_action.as_str(), "ALLOW" | "DROP") {
+        return StatusCode::BAD_REQUEST;
+    }
     let received_at_ms = now_ms();
     let at_ms = input.observed_at_ms.filter(|observed| {
         *observed <= received_at_ms.saturating_add(5_000)
             && received_at_ms.saturating_sub(*observed) <= 300_000
     });
+    let outcome = if input.firewall_action == "ALLOW" {
+        "Allowed"
+    } else {
+        "Blocked"
+    };
+    let suffix = outcome.to_ascii_lowercase();
     let (action, description) = match (input.icmp_type, input.icmp_code) {
-        (8, 0) => ("icmp_echo_request_blocked", "ICMP echo request"),
-        (0, 0) => ("icmp_echo_reply_blocked", "ICMP echo reply"),
+        (8, 0) => ("icmp_echo_request", "ICMP echo request"),
+        (0, 0) => ("icmp_echo_reply", "ICMP echo reply"),
         (3, _) => (
-            "icmp_destination_unreachable_blocked",
+            "icmp_destination_unreachable",
             "ICMP destination unreachable",
         ),
-        (11, _) => ("icmp_time_exceeded_blocked", "ICMP time exceeded"),
-        _ => ("icmp_packet_blocked", "ICMP packet"),
+        (11, _) => ("icmp_time_exceeded", "ICMP time exceeded"),
+        _ => ("icmp_packet", "ICMP packet"),
     };
     state
         .lock()
@@ -198,11 +208,15 @@ async fn ingest_icmp(
             ),
             port: 0,
             status: None,
-            action: Some(action.to_owned()),
+            action: Some(format!("{action}_{suffix}")),
             actor: None,
             target: Some(input.target),
-            outcome: Some("Blocked".to_owned()),
-            reason: Some("Dropped by Windows Firewall".to_owned()),
+            outcome: Some(outcome.to_owned()),
+            reason: Some(if outcome == "Allowed" {
+                "Allowed by Windows Firewall".to_owned()
+            } else {
+                "Dropped by Windows Firewall".to_owned()
+            }),
             user_agent: None,
             source_sensor: Some("Windows Firewall dropped-packet log".to_owned()),
         });
