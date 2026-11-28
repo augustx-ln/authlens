@@ -51,7 +51,7 @@ An instrumented local target can send authenticated audit events with an action,
 
 The local listener can forward allowed or blocked ICMP records from Windows Firewall's log, retaining their observed times even when the log flushes later. AuthLens shows their source, destination, ICMP type/code, and firewall outcome in the event stream, graph, finding drilldown, and EVTX export. Five blocked echo requests from one source in ten seconds produce a finding; allowed echo requests appear as activity. This optional sensor requires Windows Firewall packet logging to be enabled on the host. The public Docker lab alone cannot see packets handled by Windows before they reach Docker.
 
-**Download .evtx** exports the latest 500 retained lab events as a valid `.evtx` file readable in Windows Event Viewer. These are synthetic `AuthLens-LiveLab` records in the Windows Application channel, not Security events collected from the host. The file-analysis view filters for supported Windows Security and Linux auth/audit records, so it does not show these lab events when reimported.
+**Download .evtx** exports the latest 500 retained lab events as a valid `.evtx` file readable in Windows Event Viewer. These are synthetic `AuthLens-LiveLab` records in the Windows Application channel, not Security events collected from the host. The file analyzer recognizes these live monitor records alongside its supported Windows Security and Linux auth/audit events.
 
 1. Start Docker Desktop in Linux-container mode. In PowerShell, find the Windows address on the network shared with Kali:
 

@@ -48,8 +48,22 @@ struct AuthEvent {
     platform: String,
     source_file: String,
     event_id: Option<u32>,
+    #[serde(skip)]
+    lab: Option<LabObservation>,
     #[serde(skip_serializing)]
     epoch: Option<i64>,
+}
+
+#[derive(Clone)]
+struct LabObservation {
+    at_ms: Option<i64>,
+    kind: String,
+    detail: String,
+    port: Option<u16>,
+    status: Option<u16>,
+    action: Option<String>,
+    actor: Option<String>,
+    target: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -236,6 +250,7 @@ fn parse_ssh_line(line: &str, year: i32, source_file: &str) -> Option<AuthEvent>
         platform: "Linux".to_string(),
         source_file: source_file.to_string(),
         event_id: None,
+        lab: None,
         epoch,
     })
 }
@@ -269,6 +284,7 @@ fn parse_sudo_line(line: &str, year: i32, source_file: &str) -> Option<AuthEvent
         platform: "Linux".to_string(),
         source_file: source_file.to_string(),
         event_id: None,
+        lab: None,
         epoch,
     })
 }
@@ -318,6 +334,7 @@ fn parse_audit_line(line: &str, source_file: &str) -> Option<AuthEvent> {
         platform: "Linux".to_string(),
         source_file: source_file.to_string(),
         event_id: None,
+        lab: None,
         epoch: Some(epoch),
     })
 }
@@ -426,7 +443,7 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         matches!(
             *id,
             4624 | 4625 | 4672 | 4720 | 4722 | 4724 | 4725 | 4728 | 4732 | 4756
-        ) || (authlens_live && matches!(*id, 1000 | 1001))
+        ) || (authlens_live && matches!(*id, 1000 | 1001 | 1002))
     }) else {
         return Ok(None);
     };
@@ -456,10 +473,30 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
             None,
             "activity",
         ),
-        1001 if authlens_live => (
+        1001 if authlens_live => {
+            let event_action = get(&["Action"]).unwrap_or("");
+            let category = if matches!(event_action, "login_failed" | "login_success") {
+                "authentication"
+            } else {
+                "network_activity"
+            };
+            let outcome = match event_action {
+                "login_failed" => "failed",
+                "login_success" => "success",
+                _ => "activity",
+            };
+            (
+                category,
+                "HTTP request observed",
+                get(&["Target"]),
+                get(&["Actor"]),
+                outcome,
+            )
+        }
+        1002 if authlens_live => (
             "network_activity",
-            "HTTP request observed",
-            get(&["DestinationPort"]),
+            "ICMP packet observed",
+            get(&["Target"]),
             None,
             "activity",
         ),
@@ -539,10 +576,22 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         1000 if authlens_live => {
             format!("TCP connection: {}", get(&["Detail"]).unwrap_or("Unknown"))
         }
-        1001 if authlens_live => format!(
-            "HTTP request: {} ({})",
+        1001 if authlens_live => {
+            let kind = get(&["Action"]).unwrap_or("request").replace('_', " ");
+            let reason = get(&["Reason"])
+                .map(|reason| format!(" — {reason}"))
+                .unwrap_or_default();
+            format!(
+                "HTTP {kind}: {} ({}){reason}",
+                get(&["Detail"]).unwrap_or("Unknown"),
+                get(&["ResponseStatus"]).unwrap_or("unknown status")
+            )
+        }
+        1002 if authlens_live => format!(
+            "ICMP {}: {} ({})",
+            get(&["Outcome"]).unwrap_or("observed"),
             get(&["Detail"]).unwrap_or("Unknown"),
-            get(&["ResponseStatus"]).unwrap_or("unknown status")
+            get(&["Reason"]).unwrap_or("unknown result")
         ),
         4672 => format!(
             "Special privileges assigned: {}",
@@ -562,6 +611,22 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         ),
         _ => action.to_string(),
     };
+    let lab = authlens_live.then(|| LabObservation {
+        at_ms: parse_iso_millis(timestamp),
+        kind: match event_id {
+            1000 => "connection",
+            1001 => "http",
+            1002 => "icmp",
+            _ => "unknown",
+        }
+        .to_string(),
+        detail: get(&["Detail"]).unwrap_or("").to_string(),
+        port: get(&["DestinationPort"]).and_then(|value| value.parse().ok()),
+        status: get(&["ResponseStatus"]).and_then(|value| value.parse().ok()),
+        action: get(&["Action"]).map(str::to_string),
+        actor: get(&["Actor"]).map(str::to_string),
+        target: get(&["Target"]).map(str::to_string),
+    });
     Ok(Some(AuthEvent {
         timestamp: timestamp.to_string(),
         source_ip: source_ip.to_string(),
@@ -573,6 +638,7 @@ fn parse_evtx_record(xml: &str, source_file: &str) -> Result<Option<AuthEvent>, 
         platform: "Windows".to_string(),
         source_file: source_file.to_string(),
         event_id: Some(event_id),
+        lab,
         epoch,
     }))
 }
@@ -590,6 +656,7 @@ fn make_report(
     });
     let parsed_lines = events.len();
     let mut alerts = detect(&events);
+    alerts.extend(detect_live_lab(&events));
     let severity_rank = |severity: &str| match severity {
         "High" => 0,
         "Medium" => 1,
@@ -619,6 +686,7 @@ fn detect(events: &[AuthEvent]) -> Vec<Alert> {
     let mut by_source: BTreeMap<&str, Vec<&AuthEvent>> = BTreeMap::new();
     for event in events {
         if event.category == "authentication"
+            && event.lab.is_none()
             && event.outcome == "failed"
             && event.source_ip != "Unknown"
             && event.epoch.is_some()
@@ -696,6 +764,7 @@ fn detect(events: &[AuthEvent]) -> Vec<Alert> {
     for ((source_ip, username), failures) in &by_account {
         let success = events.iter().find(|event| {
             event.category == "authentication"
+                && event.lab.is_none()
                 && event.outcome == "success"
                 && event.source_ip == *source_ip
                 && event.username == *username
@@ -783,6 +852,425 @@ fn detect(events: &[AuthEvent]) -> Vec<Alert> {
         });
     }
     alerts
+}
+
+fn detect_live_lab(events: &[AuthEvent]) -> Vec<Alert> {
+    let mut by_source: BTreeMap<&str, Vec<&AuthEvent>> = BTreeMap::new();
+    for event in events {
+        if event.lab.is_some() && event.epoch.is_some() {
+            by_source
+                .entry(event.source_ip.as_str())
+                .or_default()
+                .push(event);
+        }
+    }
+
+    let mut alerts = Vec::new();
+    for (source, source_events) in by_source {
+        if source == "Unknown" {
+            continue;
+        }
+
+        let mut scan: Option<(i64, Vec<&AuthEvent>, Vec<u16>)> = None;
+        for anchor in source_events.iter().copied().filter(|event| {
+            event
+                .lab
+                .as_ref()
+                .is_some_and(|lab| lab.kind == "connection")
+        }) {
+            let Some(at_ms) = anchor.lab.as_ref().and_then(|lab| lab.at_ms) else {
+                continue;
+            };
+            let window: Vec<_> = source_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    let Some(lab) = event.lab.as_ref() else {
+                        return false;
+                    };
+                    lab.kind == "connection"
+                        && lab
+                            .at_ms
+                            .is_some_and(|time| time <= at_ms && at_ms - time <= 30_000)
+                })
+                .collect();
+            let mut ports: Vec<_> = window
+                .iter()
+                .filter_map(|event| event.lab.as_ref()?.port)
+                .collect();
+            ports.sort_unstable();
+            ports.dedup();
+            if ports.len() >= 4
+                && scan
+                    .as_ref()
+                    .is_none_or(|(seen_at, _, _)| at_ms >= *seen_at)
+            {
+                scan = Some((at_ms, window, ports));
+            }
+        }
+        if let Some((_, window, ports)) = scan {
+            let count = ports.len();
+            alerts.push(live_alert(
+                format!("live-scan-{source}"),
+                "Possible TCP connect scan",
+                "Medium",
+                format!("{count} distinct lab ports in 30 seconds: {ports:?}"),
+                source,
+                None,
+                None,
+                &window,
+                count,
+                "T1046",
+                "Network Service Discovery",
+            ));
+        }
+
+        let mut blocked_echoes: Option<(i64, Vec<&AuthEvent>)> = None;
+        for anchor in source_events.iter().copied().filter(|event| {
+            event.lab.as_ref().is_some_and(|lab| {
+                lab.kind == "icmp" && lab.action.as_deref() == Some("icmp_echo_request_blocked")
+            })
+        }) {
+            let Some(at_ms) = anchor.lab.as_ref().and_then(|lab| lab.at_ms) else {
+                continue;
+            };
+            let window: Vec<_> = source_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    let Some(lab) = event.lab.as_ref() else {
+                        return false;
+                    };
+                    lab.kind == "icmp"
+                        && lab.action.as_deref() == Some("icmp_echo_request_blocked")
+                        && lab
+                            .at_ms
+                            .is_some_and(|time| time <= at_ms && at_ms - time <= 10_000)
+                })
+                .collect();
+            if window.len() >= 5
+                && blocked_echoes
+                    .as_ref()
+                    .is_none_or(|(seen_at, _)| at_ms >= *seen_at)
+            {
+                blocked_echoes = Some((at_ms, window));
+            }
+        }
+        if let Some((_, window)) = blocked_echoes {
+            let count = window.len();
+            alerts.push(live_alert(
+                format!("live-icmp-{source}"),
+                "Repeated blocked ICMP echo requests",
+                "Medium",
+                format!("{count} echo requests dropped by Windows Firewall in 10 seconds"),
+                source,
+                None,
+                None,
+                &window,
+                count,
+                "T1018",
+                "Remote System Discovery",
+            ));
+        }
+
+        let http_events: Vec<_> = source_events
+            .iter()
+            .copied()
+            .filter(|event| event.lab.as_ref().is_some_and(|lab| lab.kind == "http"))
+            .collect();
+        let mut rapid: Option<(i64, Vec<&AuthEvent>)> = None;
+        let mut recon: Option<(i64, Vec<&AuthEvent>, usize, Vec<String>)> = None;
+        let mut enumeration: Option<(i64, Vec<&AuthEvent>, HashSet<String>)> = None;
+        for anchor in http_events.iter().copied() {
+            let Some(at_ms) = anchor.lab.as_ref().and_then(|lab| lab.at_ms) else {
+                continue;
+            };
+            let recent: Vec<_> = http_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    event
+                        .lab
+                        .as_ref()
+                        .and_then(|lab| lab.at_ms)
+                        .is_some_and(|time| time <= at_ms && at_ms - time <= 10_000)
+                })
+                .collect();
+            if recent.len() >= 12 && rapid.as_ref().is_none_or(|(seen_at, _)| at_ms >= *seen_at) {
+                rapid = Some((at_ms, recent.clone()));
+            }
+
+            if recent.len() >= 12 {
+                let paths = probe_paths(&recent);
+                let methods: HashSet<_> = recent
+                    .iter()
+                    .filter_map(|event| {
+                        let lab = event.lab.as_ref()?;
+                        (lab.status == Some(405))
+                            .then(|| {
+                                lab.detail
+                                    .split_once(' ')
+                                    .map(|(method, _)| method.to_string())
+                            })
+                            .flatten()
+                    })
+                    .collect();
+                if (paths.len() >= 6 || methods.len() >= 2)
+                    && recon.as_ref().is_none_or(|(seen_at, ..)| at_ms >= *seen_at)
+                {
+                    recon = Some((at_ms, recent, paths.len(), methods.into_iter().collect()));
+                }
+            }
+
+            let minute_window: Vec<_> = http_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    event
+                        .lab
+                        .as_ref()
+                        .and_then(|lab| lab.at_ms)
+                        .is_some_and(|time| time <= at_ms && at_ms - time <= 60_000)
+                })
+                .collect();
+            let paths = probe_paths(&minute_window);
+            if paths.len() >= 6
+                && enumeration
+                    .as_ref()
+                    .is_none_or(|(seen_at, ..)| at_ms >= *seen_at)
+            {
+                enumeration = Some((at_ms, minute_window, paths));
+            }
+        }
+
+        if let Some((_, window)) = rapid {
+            let count = window.len();
+            alerts.push(live_alert(
+                format!("live-http-burst-{source}"),
+                "Rapid web probing",
+                "Medium",
+                format!("{count} HTTP requests in 10 seconds"),
+                source,
+                None,
+                None,
+                &window,
+                count,
+                "T1595",
+                "Active Scanning",
+            ));
+        }
+        if let Some((_, window, path_count, methods)) = recon {
+            let count = window.len();
+            alerts.push(live_alert(
+                format!("live-web-recon-{source}"),
+                "Possible web reconnaissance burst",
+                "High",
+                format!(
+                    "{count} requests in 10 seconds; {path_count} distinct missing or login-gated paths; methods rejected with 405: {}",
+                    if methods.is_empty() { "none".to_string() } else { methods.join(", ") }
+                ),
+                source,
+                None,
+                None,
+                &window,
+                count,
+                "T1595.003",
+                "Wordlist Scanning",
+            ));
+        }
+        if let Some((_, window, paths)) = enumeration {
+            let count = paths.len();
+            alerts.push(live_alert(
+                format!("live-path-enum-{source}"),
+                "Possible web path enumeration",
+                "Medium",
+                format!("{count} distinct missing or login-gated paths in 60 seconds"),
+                source,
+                None,
+                None,
+                &window,
+                count,
+                "T1595.003",
+                "Wordlist Scanning",
+            ));
+        }
+
+        let mut login_failure_finding: Option<(i64, Vec<&AuthEvent>, &str)> = None;
+        let mut login_followup: Option<(i64, Vec<&AuthEvent>, &str)> = None;
+        for anchor in http_events.iter().copied().filter(|event| {
+            event.lab.as_ref().is_some_and(|lab| {
+                matches!(
+                    lab.action.as_deref(),
+                    Some("login_failed" | "login_success")
+                )
+            })
+        }) {
+            let Some(at_ms) = anchor.lab.as_ref().and_then(|lab| lab.at_ms) else {
+                continue;
+            };
+            let failures: Vec<_> = http_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    let Some(lab) = event.lab.as_ref() else {
+                        return false;
+                    };
+                    lab.detail == "POST /login"
+                        && lab.status == Some(401)
+                        && lab.action.as_deref() == Some("login_failed")
+                        && lab
+                            .at_ms
+                            .is_some_and(|time| time <= at_ms && at_ms - time <= 600_000)
+                })
+                .collect();
+            if failures.len() < 5 {
+                continue;
+            }
+            let action = anchor
+                .lab
+                .as_ref()
+                .and_then(|lab| lab.action.as_deref())
+                .unwrap_or("");
+            if action == "login_failed"
+                && login_failure_finding
+                    .as_ref()
+                    .is_none_or(|(seen_at, ..)| at_ms >= *seen_at)
+            {
+                let account = anchor
+                    .lab
+                    .as_ref()
+                    .and_then(|lab| lab.actor.as_deref())
+                    .unwrap_or("unknown");
+                login_failure_finding = Some((at_ms, failures, account));
+            } else if action == "login_success"
+                && login_followup
+                    .as_ref()
+                    .is_none_or(|(seen_at, ..)| at_ms >= *seen_at)
+            {
+                let mut related = failures;
+                related.push(anchor);
+                let account = anchor
+                    .lab
+                    .as_ref()
+                    .and_then(|lab| lab.actor.as_deref())
+                    .unwrap_or("unknown");
+                login_followup = Some((at_ms, related, account));
+            }
+        }
+        if let Some((_, window, latest_account)) = login_failure_finding {
+            let count = window.len();
+            alerts.push(live_alert(
+                format!("live-bank-login-{source}"),
+                "Repeated bank sign-in failures",
+                "Medium",
+                format!("{count} failed sign-ins from this observed source in 10 minutes; latest attempted account: {latest_account}"),
+                source,
+                None,
+                Some(latest_account.to_string()),
+                &window,
+                count,
+                "T1110.001",
+                "Password Guessing",
+            ));
+        }
+        if let Some((_, window, account)) = login_followup {
+            let count = window.len();
+            alerts.push(live_alert(
+                format!("live-bank-followup-{source}"),
+                "Bank sign-in after repeated failures",
+                "High",
+                format!(
+                    "Account {account} signed in after {} failures from this observed source",
+                    count.saturating_sub(1)
+                ),
+                source,
+                Some(account.to_string()),
+                Some(account.to_string()),
+                &window,
+                count,
+                "T1078",
+                "Valid Accounts",
+            ));
+        }
+
+        let mut seen_access = HashSet::new();
+        for event in http_events.iter().copied().filter(|event| {
+            event
+                .lab
+                .as_ref()
+                .is_some_and(|lab| lab.action.as_deref() == Some("cross_account_read"))
+        }) {
+            let lab = event.lab.as_ref().expect("filtered live event");
+            let actor = lab.actor.as_deref().unwrap_or("unknown");
+            let target = lab.target.as_deref().unwrap_or("unknown");
+            let key = format!("{actor}:{target}");
+            if seen_access.insert(key) {
+                alerts.push(live_alert(
+                    format!("live-cross-account-{source}-{actor}-{target}"),
+                    "Cross-account statement access",
+                    "High",
+                    format!("{actor} read {target} despite different account ownership"),
+                    source,
+                    None,
+                    Some(actor.to_string()),
+                    &[event],
+                    1,
+                    "",
+                    "Access-control activity",
+                ));
+            }
+        }
+    }
+    alerts
+}
+
+fn probe_paths(events: &[&AuthEvent]) -> HashSet<String> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let lab = event.lab.as_ref()?;
+            let is_probe = lab.status == Some(404)
+                || (lab.status == Some(302)
+                    && lab.action.as_deref() == Some("authentication_required"));
+            is_probe
+                .then(|| lab.detail.split_once(' ').map(|(_, path)| path.to_string()))
+                .flatten()
+        })
+        .collect()
+}
+
+fn live_alert(
+    id: String,
+    title: &str,
+    severity: &str,
+    description: String,
+    source: &str,
+    username: Option<String>,
+    actor: Option<String>,
+    events: &[&AuthEvent],
+    count: usize,
+    technique: &str,
+    technique_name: &str,
+) -> Alert {
+    Alert {
+        id,
+        title: title.to_string(),
+        severity: severity.to_string(),
+        description,
+        source_ip: source.to_string(),
+        username,
+        actor,
+        source_files: source_files_for(events.iter().copied()),
+        count,
+        first_seen: events
+            .first()
+            .map_or_else(String::new, |event| event.timestamp.clone()),
+        last_seen: events
+            .last()
+            .map_or_else(String::new, |event| event.timestamp.clone()),
+        technique: technique.to_string(),
+        technique_name: technique_name.to_string(),
+    }
 }
 
 fn source_files_for<'a>(events: impl IntoIterator<Item = &'a AuthEvent>) -> Vec<String> {
@@ -882,6 +1370,25 @@ fn parse_iso_time(value: &str) -> Option<i64> {
         civil_to_days(year, month, day) * 86_400 + (hour * 3600 + minute * 60 + second) as i64
             - offset,
     )
+}
+
+fn parse_iso_millis(value: &str) -> Option<i64> {
+    let seconds = parse_iso_time(value)?;
+    let fraction = if let Some((_, fraction)) = value.split_once('.') {
+        let digits: String = fraction
+            .chars()
+            .take_while(|character| character.is_ascii_digit())
+            .take(3)
+            .collect();
+        if digits.is_empty() {
+            0
+        } else {
+            digits.parse::<i64>().ok()? * 10_i64.pow((3 - digits.len()) as u32)
+        }
+    } else {
+        0
+    };
+    Some(seconds * 1_000 + fraction)
 }
 
 fn format_epoch(epoch: i64) -> String {
